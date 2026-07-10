@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>小译</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="popup">
+      <header>
+        <div class="brand">
+          <img class="avatar" src="icons/icon.svg" alt="" />
+          <h1>小译</h1>
+        </div>
+        <div class="header-actions">
+          <button id="assistantModeToggle" class="assistant-mode-toggle" type="button">助理模式</button>
+        </div>
+        <span id="status" role="status"></span>
+      </header>
+
+      <section id="mainView" class="view">
+        <section class="settings-card">
+          <button id="toggleSettings" class="settings-toggle" type="button" aria-expanded="true">
+            <span class="with-icon"><span class="ui-icon icon-gear" aria-hidden="true">⚙</span><span>AI 配置</span></span>
+            <span id="settingsSummary">未配置</span>
+          </button>
+
+          <div id="settingsBody" class="panel">
+            <label>
+              Base URL
+              <input id="baseUrl" type="url" placeholder="https://api.deepseek.com" />
+            </label>
+
+            <label>
+              API Key
+              <input id="apiKey" type="password" placeholder="sk-..." autocomplete="off" />
+            </label>
+            <p class="security-note">API Key 仅保存在本机浏览器扩展存储中，小译只会在你发起翻译或测试连接时使用。</p>
+
+            <label>
+              模型名称
+              <input id="model" type="text" placeholder="deepseek-chat" />
+            </label>
+
+            <button id="save" type="button"><span class="with-icon"><span class="ui-icon icon-check" aria-hidden="true">✓</span><span>保存设置</span></span></button>
+          </div>
+        </section>
+
+        <section class="self-translate-card">
+          <button id="toggleSelfTranslate" class="self-toggle" type="button" aria-expanded="true">
+            <span class="with-icon"><span class="ui-icon icon-spark" aria-hidden="true">✦</span><span>自助翻译</span></span>
+            <span id="selfSummary">自动识别 → 中文</span>
+          </button>
+
+          <div id="selfTranslateBody" class="self-body">
+            <div class="translate-controls">
+              <select id="sourceLanguage" aria-label="原语言">
+                <option value="自动识别">自动识别</option>
+                <option value="中文">中文</option>
+                <option value="繁体中文">繁体中文</option>
+                <option value="英文">英文</option>
+                <option value="日文">日文</option>
+                <option value="韩文">韩文</option>
+                <option value="法文">法文</option>
+                <option value="德文">德文</option>
+                <option value="西班牙文">西班牙文</option>
+                <option value="葡萄牙文">葡萄牙文</option>
+                <option value="意大利文">意大利文</option>
+                <option value="俄文">俄文</option>
+                <option value="阿拉伯文">阿拉伯文</option>
+                <option value="印地文">印地文</option>
+                <option value="泰文">泰文</option>
+                <option value="越南文">越南文</option>
+                <option value="印尼文">印尼文</option>
+                <option value="马来文">马来文</option>
+                <option value="土耳其文">土耳其文</option>
+                <option value="荷兰文">荷兰文</option>
+                <option value="波兰文">波兰文</option>
+                <option value="瑞典文">瑞典文</option>
+                <option value="希腊文">希腊文</option>
+                <option value="希伯来文">希伯来文</option>
+                <option value="乌克兰文">乌克兰文</option>
+              </select>
+              <button id="swapLanguages" class="swap-button" type="button" title="反转翻译" aria-label="反转翻译">
+                <span class="swap-icon" aria-hidden="true">
+                  <span class="swap-icon-line swap-icon-top"></span>
+                  <span class="swap-icon-line swap-icon-bottom"></span>
+                </span>
+              </button>
+              <select id="targetLanguage" aria-label="目标语言">
+                <option value="自动（中英互译）">自动(中英)</option>
+                <option value="中文">中文</option>
+                <option value="繁体中文">繁体中文</option>
+                <option value="英文">英文</option>
+                <option value="日文">日文</option>
+                <option value="韩文">韩文</option>
+                <option value="法文">法文</option>
+                <option value="德文">德文</option>
+                <option value="西班牙文">西班牙文</option>
+                <option value="葡萄牙文">葡萄牙文</option>
+                <option value="意大利文">意大利文</option>
+                <option value="俄文">俄文</option>
+                <option value="阿拉伯文">阿拉伯文</option>
+                <option value="印地文">印地文</option>
+                <option value="泰文">泰文</option>
+                <option value="越南文">越南文</option>
+                <option value="印尼文">印尼文</option>
+                <option value="马来文">马来文</option>
+                <option value="土耳其文">土耳其文</option>
+                <option value="荷兰文">荷兰文</option>
+                <option value="波兰文">波兰文</option>
+                <option value="瑞典文">瑞典文</option>
+                <option value="希腊文">希腊文</option>
+                <option value="希伯来文">希伯来文</option>
+                <option value="乌克兰文">乌克兰文</option>
+              </select>
+              <button id="selfTranslate" class="primary-button" type="button">翻译</button>
+            </div>
+
+            <textarea id="selfSourceText" class="translate-box source-box" rows="4" placeholder="输入要翻译的内容"></textarea>
+            <div class="result-wrap">
+              <textarea id="selfResultText" class="translate-box result-box" rows="4" readonly placeholder="翻译结果"></textarea>
+              <button id="copySelfResult" class="copy-result-button" type="button">复制</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="quick-actions">
+          <button id="translatePage" class="secondary-button core-action" type="button"><span class="with-icon"><span class="ui-icon icon-page" aria-hidden="true">☰</span><span>整页翻译</span></span></button>
+          <button id="restorePage" class="quiet-button" type="button"><span class="with-icon"><span class="ui-icon icon-restore" aria-hidden="true">↺</span><span>恢复原文</span></span></button>
+          <button id="showHistory" class="quiet-button" type="button"><span class="with-icon"><span class="ui-icon icon-history" aria-hidden="true">◷</span><span>历史记录</span></span></button>
+          <button id="showUsage" class="quiet-button" type="button"><span class="with-icon"><span class="ui-icon icon-token" aria-hidden="true">▥</span><span>Token 用量</span></span></button>
+        </section>
+
+        <p class="selection-hint"><span class="ui-icon icon-tip" aria-hidden="true">💡</span><span>划词后点击选区旁的“译”按钮，即可查看划词翻译。</span></p>
+      </section>
+
+      <section id="historyView" class="view page-view" hidden>
+        <div class="page-head">
+          <button class="back-button" type="button" data-back><span class="with-icon"><span class="ui-icon icon-back" aria-hidden="true">‹</span><span>返回</span></span></button>
+          <h2><span class="with-icon"><span class="ui-icon icon-history" aria-hidden="true">◷</span><span>翻译历史</span></span></h2>
+        </div>
+        <div class="page-toolbar">
+          <select id="historyFilter" aria-label="历史类型">
+            <option value="all">全部类型</option>
+            <option value="selection">划词翻译</option>
+            <option value="page">整页翻译</option>
+            <option value="self">自助翻译</option>
+          </select>
+          <input id="historySearch" class="history-search" type="search" placeholder="搜索历史" autocomplete="off" />
+          <button id="clearHistory" class="danger-button page-action" type="button"><span class="with-icon"><span class="ui-icon icon-close" aria-hidden="true">×</span><span>清空历史</span></span></button>
+        </div>
+        <div id="historyContent" class="page-content"></div>
+      </section>
+
+      <section id="usageView" class="view page-view" hidden>
+        <div class="page-head">
+          <button class="back-button" type="button" data-back><span class="with-icon"><span class="ui-icon icon-back" aria-hidden="true">‹</span><span>返回</span></span></button>
+          <h2><span class="with-icon"><span class="ui-icon icon-token" aria-hidden="true">▥</span><span>Token 用量</span></span></h2>
+          <button id="clearUsage" class="danger-button page-action" type="button"><span class="with-icon"><span class="ui-icon icon-close" aria-hidden="true">×</span><span>清空统计</span></span></button>
+        </div>
+        <div id="usageContent" class="page-content"></div>
+      </section>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

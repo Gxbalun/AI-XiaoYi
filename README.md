@@ -1,0 +1,129 @@
+# AI小译
+
+AI小译是一款 Chrome 浏览器翻译扩展。它可以接入你自己的 OpenAI 兼容模型接口，通过 Base URL、API Key 和模型名称完成整页翻译、划词翻译、自助翻译、翻译历史和 Token 用量统计。
+
+当前版本：`1.0.0`
+
+## 功能亮点
+
+- 自定义模型接入：支持 DeepSeek、OpenAI、通义千问等 OpenAI Chat Completions 兼容接口。
+- 整页翻译：一键翻译网页内容，支持恢复原文、翻译缓存复用和滚动补翻。
+- 双语显示：整页翻译可保留原文并展示译文，方便对照阅读。
+- 划词翻译：选中文本后出现小按钮，点击后以轻量弹窗展示翻译结果。
+- 自助翻译：在扩展弹窗或助理模式中输入文本，选择源语言和目标语言后直接翻译。
+- 助理模式：浏览器右侧悬浮入口，可快速触发整页翻译、自助翻译、历史记录、Token 用量和 AI 配置。
+- 翻译历史：本地保存最近 7 天历史，可按整页翻译、划词翻译、自助翻译筛选，并支持清空。
+- Token 统计：本地记录不同翻译类型的 Token 使用量，支持按用量排序和清空统计。
+- 连接测试：保存 AI 配置时自动测试接口是否可用。
+- 精致小窗：macOS 风格圆角、轻量图标、悬浮窗透明度调节和按钮反馈动画。
+
+## 安装方式
+
+1. 下载或克隆本项目。
+2. 打开 Chrome，进入 `chrome://extensions/`。
+3. 打开右上角“开发者模式”。
+4. 点击“加载已解压的扩展程序”。
+5. 选择项目目录 `chrome-ai-translator`。
+
+## 配置说明
+
+打开扩展弹窗，在“AI 配置”中填写：
+
+- `Base URL`：模型服务地址，例如 `https://api.deepseek.com`
+- `API Key`：你的模型服务密钥
+- `模型名称`：例如 `deepseek-chat`
+
+保存设置时，扩展会自动发起一次连接测试，并提示连接结果。
+
+### DeepSeek 示例
+
+```text
+Base URL: https://api.deepseek.com
+模型名称: deepseek-chat
+```
+
+插件会自动把常见 Base URL 补全为 Chat Completions 请求地址。你也可以直接填写完整地址，例如：
+
+```text
+https://api.deepseek.com/chat/completions
+```
+
+## 接口要求
+
+AI小译调用 OpenAI 兼容的 Chat Completions 接口：
+
+```http
+POST /v1/chat/completions
+Authorization: Bearer YOUR_API_KEY
+Content-Type: application/json
+```
+
+请求体示例：
+
+```json
+{
+  "model": "your-model",
+  "messages": [
+    { "role": "system", "content": "翻译指令" },
+    { "role": "user", "content": "待翻译文本" }
+  ],
+  "temperature": 0.2
+}
+```
+
+## 数据与隐私
+
+- API Key、Base URL、模型名称、翻译历史、Token 统计和界面偏好均保存在本机 Chrome 扩展存储中。
+- 扩展不会内置任何第三方统计 SDK。
+- 翻译请求只会发送到你配置的模型接口。
+- 翻译历史默认保留最近 7 天，也可以在历史记录页面手动清空。
+- Token 统计只记录接口返回的用量信息，不代表你的服务商账户余额。
+
+## 项目结构
+
+```text
+chrome-ai-translator/
+├── manifest.json      # Chrome MV3 扩展清单
+├── background.js      # 模型请求、配置、历史和 Token 统计
+├── content.js         # 网页注入、整页翻译、划词翻译、助理模式
+├── popup.html         # 扩展弹窗结构
+├── popup.css          # 扩展弹窗样式
+├── popup.js           # 扩展弹窗交互
+└── icons/             # 扩展图标
+```
+
+## 本地开发
+
+修改代码后，在 `chrome://extensions/` 中点击扩展卡片上的“重新加载”，然后刷新目标网页。
+
+发布前可以运行基础语法检查：
+
+```bash
+node --check background.js
+node --check content.js
+node --check popup.js
+```
+
+打包为 zip：
+
+```bash
+zip -r ../chrome-ai-translator.zip . -x '.DS_Store'
+```
+
+## 常见问题
+
+### 为什么整页翻译速度比浏览器内置翻译慢？
+
+浏览器内置翻译通常使用浏览器厂商的专用翻译引擎和深度集成能力。AI小译通过通用大模型接口翻译网页文本，需要分段、请求、等待模型生成和替换页面内容，因此速度会受模型响应、网络延迟和页面结构影响。
+
+### 为什么有些动态菜单没有立刻翻译？
+
+部分网页菜单、弹窗和下拉内容是鼠标悬停或点击后才动态渲染的。AI小译会尽量在页面变化和滚动时补充翻译，但复杂网页仍可能存在延迟。
+
+### API Key 会上传到哪里？
+
+API Key 只保存在本机 Chrome 扩展存储中。翻译时会随请求发送到你配置的模型服务商。
+
+## 开源协议
+
+本项目基于 MIT License 开源，详见 [LICENSE](LICENSE)。
