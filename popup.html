@@ -40,7 +40,7 @@
 
             <label>
               模型名称
-              <input id="model" type="text" placeholder="deepseek-chat" />
+              <input id="model" type="text" placeholder="deepseek-v4-flash" />
             </label>
 
             <button id="save" type="button"><span class="with-icon"><span class="ui-icon icon-check" aria-hidden="true">✓</span><span>保存设置</span></span></button>
@@ -120,7 +120,7 @@
 
             <textarea id="selfSourceText" class="translate-box source-box" rows="4" placeholder="输入要翻译的内容"></textarea>
             <div class="result-wrap">
-              <textarea id="selfResultText" class="translate-box result-box" rows="4" readonly placeholder="翻译结果"></textarea>
+              <div id="selfResultText" class="translate-box result-box learning-result" role="textbox" aria-readonly="true" data-placeholder="翻译结果"></div>
               <button id="copySelfResult" class="copy-result-button" type="button">复制</button>
             </div>
           </div>
@@ -131,6 +131,7 @@
           <button id="restorePage" class="quiet-button" type="button"><span class="with-icon"><span class="ui-icon icon-restore" aria-hidden="true">↺</span><span>恢复原文</span></span></button>
           <button id="showHistory" class="quiet-button" type="button"><span class="with-icon"><span class="ui-icon icon-history" aria-hidden="true">◷</span><span>历史记录</span></span></button>
           <button id="showUsage" class="quiet-button" type="button"><span class="with-icon"><span class="ui-icon icon-token" aria-hidden="true">▥</span><span>Token 用量</span></span></button>
+          <button id="showWordBook" class="quiet-button" type="button"><span class="with-icon"><span class="ui-icon icon-book" aria-hidden="true">▤</span><span>单词本</span></span></button>
         </section>
 
         <p class="selection-hint"><span class="ui-icon icon-tip" aria-hidden="true">💡</span><span>划词后点击选区旁的“译”按钮，即可查看划词翻译。</span></p>
@@ -162,7 +163,20 @@
         </div>
         <div id="usageContent" class="page-content"></div>
       </section>
+
+      <section id="wordBookView" class="view page-view" hidden>
+        <div class="page-head">
+          <button class="back-button" type="button" data-back><span class="with-icon"><span class="ui-icon icon-back" aria-hidden="true">‹</span><span>返回</span></span></button>
+          <h2><span class="with-icon"><span class="ui-icon icon-book" aria-hidden="true">▤</span><span>单词本</span></span></h2>
+        </div>
+        <div class="page-toolbar word-book-toolbar">
+          <input id="wordBookSearch" class="history-search" type="search" placeholder="搜索单词或释义" autocomplete="off" />
+        </div>
+        <div id="wordBookContent" class="page-content"></div>
+      </section>
     </main>
+
+    <div id="wordStudyDialog" class="word-study-dialog" hidden></div>
 
     <script src="popup.js"></script>
   </body>

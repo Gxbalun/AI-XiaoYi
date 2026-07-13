@@ -4,7 +4,7 @@ const DEFAULT_SETTINGS = {
   model: "gpt-4o-mini",
   targetLanguage: "中文"
 };
-const CONTENT_VERSION = "1.0.33";
+const CONTENT_VERSION = "1.0.34";
 const ASSISTANT_MODE_ENABLED_KEY = "assistantModeEnabled";
 const ASSISTANT_MODE_PAUSED_UNTIL_KEY = "assistantModePausedUntil";
 const UI_STATE_DEFAULTS = {
@@ -24,6 +24,7 @@ const assistantModeToggle = document.getElementById("assistantModeToggle");
 const mainView = document.getElementById("mainView");
 const historyView = document.getElementById("historyView");
 const usageView = document.getElementById("usageView");
+const wordBookView = document.getElementById("wordBookView");
 const toggleSettingsButton = document.getElementById("toggleSettings");
 const settingsBody = document.getElementById("settingsBody");
 const settingsSummary = document.getElementById("settingsSummary");
@@ -35,6 +36,7 @@ const translatePageButton = document.getElementById("translatePage");
 const restorePageButton = document.getElementById("restorePage");
 const showHistoryButton = document.getElementById("showHistory");
 const showUsageButton = document.getElementById("showUsage");
+const showWordBookButton = document.getElementById("showWordBook");
 const clearHistoryButton = document.getElementById("clearHistory");
 const historyFilter = document.getElementById("historyFilter");
 const historySearch = document.getElementById("historySearch");
@@ -48,7 +50,12 @@ const selfTranslateButton = document.getElementById("selfTranslate");
 const copySelfResultButton = document.getElementById("copySelfResult");
 const historyContent = document.getElementById("historyContent");
 const usageContent = document.getElementById("usageContent");
+const wordBookSearch = document.getElementById("wordBookSearch");
+const wordBookContent = document.getElementById("wordBookContent");
+const wordStudyDialog = document.getElementById("wordStudyDialog");
 let currentHistory = [];
+let currentWordBook = [];
+let wordStudyPinned = false;
 
 document.addEventListener("DOMContentLoaded", init);
 assistantModeToggle.addEventListener("click", toggleAssistantMode);
@@ -59,10 +66,12 @@ translatePageButton.addEventListener("click", translatePage);
 restorePageButton.addEventListener("click", restorePage);
 showHistoryButton.addEventListener("click", showHistory);
 showUsageButton.addEventListener("click", showUsage);
+showWordBookButton.addEventListener("click", showWordBook);
 clearHistoryButton.addEventListener("click", clearHistory);
 historyFilter.addEventListener("change", () => renderHistory(currentHistory));
 historySearch.addEventListener("input", () => renderHistory(currentHistory));
 clearUsageButton.addEventListener("click", clearUsage);
+wordBookSearch.addEventListener("input", renderWordBook);
 swapLanguagesButton.addEventListener("click", swapLanguages);
 selfTranslateButton.addEventListener("click", translateSelfText);
 copySelfResultButton.addEventListener("click", copySelfResult);
@@ -72,6 +81,11 @@ sourceLanguageSelect.addEventListener("change", () => {
   saveSelfTranslateState();
 });
 selfSourceText.addEventListener("input", autoDetectSelfSourceLanguage);
+document.addEventListener("pointerdown", (event) => {
+  if (!wordStudyDialog.hidden && !wordStudyPinned && !wordStudyDialog.contains(event.target) && !event.target.closest(".learn-word")) {
+    closeWordStudy();
+  }
+});
 document.querySelectorAll("[data-back]").forEach((button) => {
   button.addEventListener("click", () => showView("main"));
 });
@@ -206,7 +220,7 @@ async function translateSelfText() {
 
   await persistSettings(readSettings());
   setBusy(selfTranslateButton, true, "翻译中");
-  selfResultText.value = "";
+  setLearningResult(selfResultText, "");
 
   try {
     const response = await chrome.runtime.sendMessage({
@@ -216,7 +230,7 @@ async function translateSelfText() {
       targetLanguage: targetLanguageSelect.value
     });
     if (!response?.ok) throw new Error(response?.error || "翻译失败");
-    selfResultText.value = response.translation;
+    setLearningResult(selfResultText, response.translation, text);
     showStatus("翻译完成");
   } catch (error) {
     showStatus(error.message || String(error), true);
@@ -226,7 +240,7 @@ async function translateSelfText() {
 }
 
 async function copySelfResult() {
-  const text = selfResultText.value.trim();
+  const text = getLearningText(selfResultText);
   if (!text) {
     showStatus("暂无译文", true);
     return;
@@ -236,9 +250,14 @@ async function copySelfResult() {
     await navigator.clipboard.writeText(text);
     showStatus("已复制");
   } catch (error) {
-    selfResultText.focus();
-    selfResultText.select();
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    document.body.append(textarea);
+    textarea.select();
     const copied = document.execCommand("copy");
+    textarea.remove();
     showStatus(copied ? "已复制" : "复制失败", !copied);
   }
 }
@@ -250,10 +269,10 @@ function swapLanguages() {
   setTargetLanguage(sourceLanguage === "自动识别" ? "自动（中英互译）" : sourceLanguage);
   saveSelfTranslateState();
 
-  if (selfResultText.value.trim()) {
+  if (getLearningText(selfResultText)) {
     const sourceText = selfSourceText.value;
-    selfSourceText.value = selfResultText.value;
-    selfResultText.value = sourceText;
+    selfSourceText.value = getLearningText(selfResultText);
+    setLearningResult(selfResultText, sourceText);
   }
 }
 
@@ -320,6 +339,61 @@ async function showUsage() {
   } catch (error) {
     usageContent.innerHTML = `<div class="empty-state">${escapeHtml(error.message || String(error))}</div>`;
   }
+}
+
+async function showWordBook() {
+  showView("wordBook");
+  wordBookContent.innerHTML = '<div class="empty-state">读取中...</div>';
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "get-word-book" });
+    if (!response?.ok) throw new Error(response?.error || "读取单词本失败");
+    currentWordBook = response.words || [];
+    renderWordBook();
+  } catch (error) {
+    wordBookContent.innerHTML = `<div class="empty-state">${escapeHtml(error.message || String(error))}</div>`;
+  }
+}
+
+function renderWordBook() {
+  const keyword = wordBookSearch.value.trim().toLowerCase();
+  const words = currentWordBook.filter((item) => !keyword || [item.word, item.lemma, item.partOfSpeech, ...(item.meanings || [])]
+    .join(" ").toLowerCase().includes(keyword));
+  if (!words.length) {
+    wordBookContent.innerHTML = `<div class="empty-state">${keyword ? "没有找到匹配的单词" : "单词本还是空的"}</div>`;
+    return;
+  }
+  wordBookContent.innerHTML = words.map((item) => `
+    <article class="word-book-item">
+      <div class="word-book-item-head">
+        <span class="word-book-word">${escapeHtml(item.word || item.lemma)}</span>
+        <span class="word-book-meta">${escapeHtml([item.phonetic, item.partOfSpeech].filter(Boolean).join(" · "))}</span>
+        <button class="word-book-remove" type="button" data-word-key="${escapeHtml(item.key)}">删除</button>
+      </div>
+      <div class="word-book-meaning">${escapeHtml((item.meanings || []).join("；") || item.contextMeaning || "暂无释义")}</div>
+    </article>
+  `).join("");
+  wordBookContent.querySelectorAll("[data-word-key]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const response = await chrome.runtime.sendMessage({ type: "remove-word-book-entry", key: button.dataset.wordKey });
+      if (!response?.ok) {
+        showStatus(response?.error || "删除失败", true);
+        return;
+      }
+      currentWordBook = currentWordBook.filter((item) => item.key !== button.dataset.wordKey);
+      renderWordBook();
+    });
+  });
+  wordBookContent.querySelectorAll(".word-book-item").forEach((item, index) => {
+    item.addEventListener("click", (event) => {
+      if (event.target.closest("[data-word-key]")) return;
+      const entry = words[index];
+      if (!entry) return;
+      entry.favorite = true;
+      wordStudyPinned = false;
+      wordStudyDialog.hidden = false;
+      renderWordStudy(entry);
+    });
+  });
 }
 
 async function clearUsage() {
@@ -430,7 +504,7 @@ function usageCard(label, value) {
 }
 
 function renderUsageBars(byMode) {
-  const entries = ["selection", "page", "self", "test"]
+  const entries = ["selection", "page", "self", "word", "test"]
     .map((mode) => ({
       mode,
       label: getModeLabel(mode),
@@ -497,6 +571,7 @@ function autoDetectSelfSourceLanguage() {
 function getModeLabel(mode, count) {
   if (mode === "page") return `整页翻译${count ? ` · ${count} 段` : ""}`;
   if (mode === "self") return "自助翻译";
+  if (mode === "word") return "单词学习";
   if (mode === "test") return "连接测试";
   return "划词翻译";
 }
@@ -504,6 +579,7 @@ function getModeLabel(mode, count) {
 function getModeClass(mode) {
   if (mode === "page") return "page";
   if (mode === "self") return "self";
+  if (mode === "word") return "word";
   if (mode === "test") return "test";
   return "selection";
 }
@@ -534,6 +610,7 @@ function showView(view) {
   mainView.hidden = view !== "main";
   historyView.hidden = view !== "history";
   usageView.hidden = view !== "usage";
+  wordBookView.hidden = view !== "wordBook";
 }
 
 function toggleSettings() {
@@ -669,4 +746,94 @@ function escapeHtml(value) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function getLearningText(element) {
+  return String(element.dataset.translation ?? element.textContent ?? "").trim();
+}
+
+function setLearningResult(element, text, sourceText = "") {
+  element.textContent = "";
+  const value = String(text || "");
+  element.dataset.translation = value;
+  if (!value && !sourceText) return;
+  if (sourceText && /[A-Za-z]/.test(sourceText)) {
+    const source = document.createElement("div");
+    source.className = "learning-source";
+    appendLearningWords(source, String(sourceText), String(sourceText));
+    element.append(source);
+  }
+  const translation = document.createElement("div");
+  translation.className = "learning-translation";
+  appendLearningWords(translation, value, value);
+  element.append(translation);
+}
+
+function appendLearningWords(container, value, sentence) {
+  const fragment = document.createDocumentFragment();
+  const pattern = /[A-Za-z]+(?:['-][A-Za-z]+)*/g;
+  let index = 0;
+  for (const match of value.matchAll(pattern)) {
+    fragment.append(value.slice(index, match.index));
+    const word = document.createElement("span");
+    word.className = "learn-word";
+    word.textContent = match[0];
+    word.title = "点击查看单词学习资料";
+    word.addEventListener("click", () => openWordStudy(match[0], sentence));
+    fragment.append(word);
+    index = match.index + match[0].length;
+  }
+  fragment.append(value.slice(index));
+  container.append(fragment);
+}
+
+async function openWordStudy(word, sentence) {
+  wordStudyPinned = false;
+  wordStudyDialog.hidden = false;
+  wordStudyDialog.innerHTML = '<section class="word-study-card"><div class="word-study-loading">正在查词...</div></section>';
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "lookup-english-word", word, sentence });
+    if (!response?.ok) throw new Error(response?.error || "查词失败");
+    renderWordStudy(response.entry);
+  } catch (error) {
+    wordStudyDialog.innerHTML = `<section class="word-study-card"><div class="word-study-loading">${escapeHtml(error.message || String(error))}</div></section>`;
+  }
+}
+
+function renderWordStudy(entry) {
+  const card = document.createElement("section");
+  card.className = "word-study-card";
+  card.innerHTML = `
+    <div class="word-study-head">
+      <div><div class="word-study-word">${escapeHtml(entry.word)}</div><div class="word-study-phonetic">${escapeHtml([entry.phonetic, entry.partOfSpeech].filter(Boolean).join(" · "))}</div></div>
+      <div class="word-study-tools"><button type="button" data-pin title="临时置顶">置顶</button><button type="button" data-favorite title="收藏到单词本">${entry.favorite ? "已收藏" : "收藏"}</button><button type="button" data-close title="关闭">关闭</button></div>
+    </div>
+    ${entry.contextMeaning ? `<div class="word-study-section"><div class="word-study-label">当前语境</div><div class="word-study-context">${escapeHtml(entry.contextMeaning)}</div></div>` : ""}
+    <div class="word-study-section"><div class="word-study-label">释义</div><ol class="word-study-meanings">${(entry.meanings || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>暂无释义</li>"}</ol></div>
+    ${entry.forms?.length ? `<div class="word-study-section"><div class="word-study-label">词形</div><div class="word-study-forms">${escapeHtml(entry.forms.join(" · "))}</div></div>` : ""}
+    ${entry.example ? `<div class="word-study-section"><div class="word-study-label">示例</div><div class="word-study-example">${escapeHtml(entry.example)}${entry.exampleTranslation ? `<br>${escapeHtml(entry.exampleTranslation)}` : ""}</div></div>` : ""}
+  `;
+  wordStudyDialog.replaceChildren(card);
+  card.querySelector("[data-close]").addEventListener("click", closeWordStudy);
+  card.querySelector("[data-pin]").addEventListener("click", (event) => {
+    wordStudyPinned = !wordStudyPinned;
+    event.currentTarget.classList.toggle("is-active", wordStudyPinned);
+    event.currentTarget.textContent = wordStudyPinned ? "已置顶" : "置顶";
+  });
+  card.querySelector("[data-favorite]").addEventListener("click", async (event) => {
+    const response = await chrome.runtime.sendMessage({ type: "toggle-word-favorite", entry });
+    if (!response?.ok) {
+      showStatus(response?.error || "收藏失败", true);
+      return;
+    }
+    entry.favorite = response.favorite;
+    event.currentTarget.textContent = entry.favorite ? "已收藏" : "收藏";
+    showStatus(entry.favorite ? "已加入单词本" : "已移出单词本");
+  });
+}
+
+function closeWordStudy() {
+  wordStudyDialog.hidden = true;
+  wordStudyDialog.textContent = "";
+  wordStudyPinned = false;
 }

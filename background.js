@@ -8,9 +8,14 @@ const DEFAULT_SETTINGS = {
 const HISTORY_KEY = "translationHistory";
 const TOKEN_EVENTS_KEY = "tokenUsageEvents";
 const TOKEN_TOTALS_KEY = "tokenUsageTotals";
+const WORD_CACHE_KEY = "englishWordCache";
+const WORD_BOOK_KEY = "englishWordBook";
 const HISTORY_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_HISTORY_ITEMS = 300;
 const MAX_TOKEN_EVENTS = 1000;
+const WORD_CACHE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+const MAX_WORD_CACHE_ITEMS = 3000;
+const MAX_WORD_BOOK_ITEMS = 3000;
 const activeRequests = new Map();
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -31,6 +36,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "translate-batch") {
     translateBatch(message.items || [], sender, message.requestId)
       .then((items) => sendResponse({ ok: true, items }))
+      .catch((error) => sendResponse({ ok: false, error: friendlyErrorMessage(error) }));
+    return true;
+  }
+
+  if (message?.type === "lookup-english-word") {
+    lookupEnglishWord(message)
+      .then((entry) => sendResponse({ ok: true, entry }))
+      .catch((error) => sendResponse({ ok: false, error: friendlyErrorMessage(error) }));
+    return true;
+  }
+
+  if (message?.type === "toggle-word-favorite") {
+    toggleWordFavorite(message.entry)
+      .then((favorite) => sendResponse({ ok: true, favorite }))
+      .catch((error) => sendResponse({ ok: false, error: friendlyErrorMessage(error) }));
+    return true;
+  }
+
+  if (message?.type === "get-word-book") {
+    getWordBook()
+      .then((words) => sendResponse({ ok: true, words }))
+      .catch((error) => sendResponse({ ok: false, error: friendlyErrorMessage(error) }));
+    return true;
+  }
+
+  if (message?.type === "remove-word-book-entry") {
+    removeWordBookEntry(message.key)
+      .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, error: friendlyErrorMessage(error) }));
     return true;
   }
@@ -167,6 +200,122 @@ async function translateSelfText(message, sender) {
   });
 
   return result.content;
+}
+
+async function lookupEnglishWord(message) {
+  const word = String(message.word || "").trim();
+  const sentence = String(message.sentence || "").trim().slice(0, 700);
+  if (!/^[A-Za-z][A-Za-z'-]*$/.test(word)) {
+    throw new Error("请选择一个英文单词。");
+  }
+
+  const key = normalizeWordKey(word);
+  const stored = await chrome.storage.local.get({ [WORD_CACHE_KEY]: {}, [WORD_BOOK_KEY]: [] });
+  const cached = stored[WORD_CACHE_KEY]?.[key];
+  const wordBook = stored[WORD_BOOK_KEY] || [];
+  if (cached && Date.now() - Number(cached.updatedAt || 0) <= WORD_CACHE_TTL_MS) {
+    return { ...cached, favorite: isWordFavorite(wordBook, cached, key) };
+  }
+
+  const settings = await getSettings();
+  validateSettings(settings);
+  const result = await callChatCompletions(settings, [
+    {
+      role: "system",
+      content:
+        "You are an English learning dictionary. Return only valid JSON, no markdown. " +
+        "Use this exact schema: {\"word\":\"\",\"lemma\":\"\",\"phonetic\":\"\",\"partOfSpeech\":\"\",\"meanings\":[\"\"],\"forms\":[\"\"],\"example\":\"\",\"exampleTranslation\":\"\",\"contextMeaning\":\"\"}. " +
+        "Write Chinese for meanings, forms, and explanations. Provide at most 3 concise meanings, 4 useful forms, and one short example. " +
+        "If context is supplied, contextMeaning must explain the meaning in that context."
+    },
+    { role: "user", content: JSON.stringify({ word, context: sentence }) }
+  ], { maxTokens: 420 });
+  await recordTokenUsage(result.usage, { mode: "word", model: result.model });
+
+  const entry = normalizeWordEntry(parseWordJson(result.content), word, sentence);
+  const cache = pruneWordCache(stored[WORD_CACHE_KEY] || {});
+  cache[key] = { ...entry, key, updatedAt: Date.now() };
+  await chrome.storage.local.set({ [WORD_CACHE_KEY]: trimWordCache(cache) });
+  return { ...cache[key], favorite: isWordFavorite(wordBook, cache[key], key) };
+}
+
+function parseWordJson(content) {
+  const cleaned = String(content || "")
+    .trim()
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/i, "");
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const start = cleaned.indexOf("{");
+    const end = cleaned.lastIndexOf("}");
+    if (start >= 0 && end > start) return JSON.parse(cleaned.slice(start, end + 1));
+    throw new Error("模型没有返回可解析的单词资料。");
+  }
+}
+
+function normalizeWordEntry(value, word, sentence) {
+  const list = (input, limit) => Array.isArray(input)
+    ? input.map((item) => String(item || "").trim()).filter(Boolean).slice(0, limit)
+    : [];
+  return {
+    word: String(value?.word || word).trim() || word,
+    lemma: String(value?.lemma || word).trim() || word,
+    phonetic: String(value?.phonetic || "").trim(),
+    partOfSpeech: String(value?.partOfSpeech || "").trim(),
+    meanings: list(value?.meanings, 3),
+    forms: list(value?.forms, 4),
+    example: String(value?.example || "").trim(),
+    exampleTranslation: String(value?.exampleTranslation || "").trim(),
+    contextMeaning: String(value?.contextMeaning || "").trim(),
+    context: sentence
+  };
+}
+
+async function toggleWordFavorite(rawEntry) {
+  const key = normalizeWordKey(rawEntry?.lemma || rawEntry?.word || "");
+  if (!key) throw new Error("单词资料不完整，暂时无法收藏。");
+  const stored = await chrome.storage.local.get({ [WORD_BOOK_KEY]: [] });
+  const words = stored[WORD_BOOK_KEY] || [];
+  const index = words.findIndex((item) => item.key === key);
+  if (index >= 0) {
+    words.splice(index, 1);
+    await chrome.storage.local.set({ [WORD_BOOK_KEY]: words });
+    return false;
+  }
+  const entry = { ...normalizeWordEntry(rawEntry, rawEntry?.word || key, rawEntry?.context || ""), key, savedAt: Date.now() };
+  await chrome.storage.local.set({ [WORD_BOOK_KEY]: [entry, ...words].slice(0, MAX_WORD_BOOK_ITEMS) });
+  return true;
+}
+
+async function getWordBook() {
+  const stored = await chrome.storage.local.get({ [WORD_BOOK_KEY]: [] });
+  return (stored[WORD_BOOK_KEY] || []).slice().sort((a, b) => Number(b.savedAt || 0) - Number(a.savedAt || 0));
+}
+
+async function removeWordBookEntry(key) {
+  const stored = await chrome.storage.local.get({ [WORD_BOOK_KEY]: [] });
+  await chrome.storage.local.set({ [WORD_BOOK_KEY]: (stored[WORD_BOOK_KEY] || []).filter((item) => item.key !== key) });
+}
+
+function normalizeWordKey(word) {
+  return String(word || "").trim().toLowerCase().replace(/^[^a-z]+|[^a-z]+$/g, "");
+}
+
+function isWordFavorite(words, entry, fallbackKey) {
+  const lemmaKey = normalizeWordKey(entry?.lemma || entry?.word || fallbackKey);
+  return words.some((item) => item.key === fallbackKey || item.key === lemmaKey);
+}
+
+function pruneWordCache(cache) {
+  const cutoff = Date.now() - WORD_CACHE_TTL_MS;
+  return Object.fromEntries(Object.entries(cache).filter(([, item]) => Number(item?.updatedAt || 0) >= cutoff));
+}
+
+function trimWordCache(cache) {
+  const entries = Object.entries(cache).sort(([, a], [, b]) => Number(b?.updatedAt || 0) - Number(a?.updatedAt || 0));
+  return Object.fromEntries(entries.slice(0, MAX_WORD_CACHE_ITEMS));
 }
 
 function normalizeAutoTargetLanguage(language) {

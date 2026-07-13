@@ -204,6 +204,41 @@ textarea {
   font: 12px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
+.learning-result {
+  min-height: 76px;
+  padding: 9px 52px 9px 10px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.learning-result:empty::before {
+  content: attr(data-placeholder);
+  color: #94a3b8;
+}
+
+.learning-result .learning-source {
+  margin-bottom: 7px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid #e5eaf2;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.learn-word {
+  color: inherit;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: color 140ms ease, background 140ms ease;
+}
+
+.learn-word:hover {
+  color: #409eff;
+  background: #ecf5ff;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 input,
 select {
   color: #64748b;
@@ -531,6 +566,11 @@ button:disabled {
 .icon-token {
   mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M4 5h7v7H4V5Zm9 0h7v7h-7V5ZM4 14h7v5H4v-5Zm9 0h7v5h-7v-5Z'/%3E%3C/svg%3E");
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M4 5h7v7H4V5Zm9 0h7v7h-7V5ZM4 14h7v5H4v-5Zm9 0h7v5h-7v-5Z'/%3E%3C/svg%3E");
+}
+
+.icon-book {
+  mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.3' stroke-linecap='round' stroke-linejoin='round' d='M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21V5.5Zm16 0A2.5 2.5 0 0 0 17.5 3H13v16h4.5A2.5 2.5 0 0 1 20 21V5.5Z'/%3E%3C/svg%3E");
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.3' stroke-linecap='round' stroke-linejoin='round' d='M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21V5.5Zm16 0A2.5 2.5 0 0 0 17.5 3H13v16h4.5A2.5 2.5 0 0 1 20 21V5.5Z'/%3E%3C/svg%3E");
 }
 
 .icon-back {
@@ -892,6 +932,10 @@ h2 {
   background: #f97316;
 }
 
+.usage-bar-fill.word {
+  background: #a855f7;
+}
+
 .usage-bar-fill.test {
   background: #94a3b8;
 }
@@ -910,4 +954,157 @@ h2 {
   padding: 14px 8px;
   color: #6b7280;
   text-align: center;
+}
+
+.word-book-toolbar {
+  justify-content: stretch;
+}
+
+.word-book-item {
+  display: grid;
+  gap: 5px;
+  padding: 9px;
+  border: 1px solid #eef2f7;
+  border-radius: 12px;
+  background: #fbfdff;
+}
+
+.word-book-item-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.word-book-word {
+  min-width: 0;
+  color: #1f2937;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.word-book-meta {
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.word-book-remove {
+  margin-left: auto;
+  min-height: 24px;
+  padding: 0 7px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fff;
+  color: #dc2626;
+  box-shadow: none;
+  font-size: 10px;
+}
+
+.word-book-meaning {
+  color: #475569;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.word-study-dialog {
+  position: fixed;
+  z-index: 20;
+  inset: 8px;
+  display: grid;
+  align-content: center;
+  pointer-events: none;
+}
+
+.word-study-dialog[hidden] {
+  display: none;
+}
+
+.word-study-card {
+  position: relative;
+  max-height: 420px;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 46px rgba(15, 23, 42, 0.22);
+  pointer-events: auto;
+}
+
+.word-study-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.word-study-word {
+  color: #1f2937;
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.word-study-phonetic {
+  margin-top: 3px;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.word-study-tools {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.word-study-tools button {
+  min-width: 25px;
+  min-height: 25px;
+  padding: 0 7px;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  background: #fff;
+  color: #64748b;
+  box-shadow: none;
+  font-size: 10px;
+}
+
+.word-study-tools button:hover,
+.word-study-tools button.is-active {
+  border-color: #b3d8ff;
+  background: #ecf5ff;
+  color: #2563eb;
+}
+
+.word-study-section {
+  margin-top: 10px;
+}
+
+.word-study-label {
+  color: #a16207;
+  font-size: 10px;
+}
+
+.word-study-context,
+.word-study-meanings,
+.word-study-example,
+.word-study-forms {
+  margin-top: 4px;
+  color: #334155;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.word-study-meanings {
+  padding-left: 17px;
+}
+
+.word-study-example {
+  color: #64748b;
+  font-style: italic;
+}
+
+.word-study-loading {
+  min-height: 110px;
+  display: grid;
+  place-items: center;
+  color: #409eff;
+  font-size: 12px;
 }

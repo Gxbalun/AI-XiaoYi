@@ -1,6 +1,6 @@
 # AI小译
 
-AI小译是一款 Chrome 浏览器翻译扩展。它可以接入你自己的 OpenAI 兼容模型接口，通过 Base URL、API Key 和模型名称完成整页翻译、划词翻译、自助翻译、翻译历史和 Token 用量统计。
+AI小译是一款 Chrome 浏览器翻译扩展。它可以接入你自己的 OpenAI 兼容模型接口，通过 Base URL、API Key 和模型名称完成整页翻译、划词翻译、自助翻译、单词学习、翻译历史和 Token 用量统计。
 
 当前版本：`1.0.0`
 
@@ -8,9 +8,10 @@ AI小译是一款 Chrome 浏览器翻译扩展。它可以接入你自己的 Ope
 
 - 自定义模型接入：支持 DeepSeek、OpenAI、通义千问等 OpenAI Chat Completions 兼容接口。
 - 整页翻译：一键翻译网页内容，支持恢复原文、翻译缓存复用和滚动补翻。
-- 双语显示：整页翻译可保留原文并展示译文，方便对照阅读。
 - 划词翻译：选中文本后出现小按钮，点击后以轻量弹窗展示翻译结果。
 - 自助翻译：在扩展弹窗或助理模式中输入文本，选择源语言和目标语言后直接翻译。
+- 单词学习：仅在点击划词译文或自助译文中的英文词时请求 AI，展示音标、词性、语境释义、词形和例句；查过的词会在本机缓存，避免重复消耗 Token。
+- 单词本：收藏词条后可在扩展弹窗中搜索、查看和删除，不会自动跳转打断阅读。
 - 助理模式：浏览器右侧悬浮入口，可快速触发整页翻译、自助翻译、历史记录、Token 用量和 AI 配置。
 - 翻译历史：本地保存最近 7 天历史，可按整页翻译、划词翻译、自助翻译筛选，并支持清空。
 - Token 统计：本地记录不同翻译类型的 Token 使用量，支持按用量排序和清空统计。
@@ -23,7 +24,7 @@ AI小译是一款 Chrome 浏览器翻译扩展。它可以接入你自己的 Ope
 2. 打开 Chrome，进入 `chrome://extensions/`。
 3. 打开右上角“开发者模式”。
 4. 点击“加载已解压的扩展程序”。
-5. 选择项目目录 `chrome-ai-translator`。
+5. 选择项目目录 `ai-xiaoyi`。
 
 ## 配置说明
 
@@ -31,7 +32,7 @@ AI小译是一款 Chrome 浏览器翻译扩展。它可以接入你自己的 Ope
 
 - `Base URL`：模型服务地址，例如 `https://api.deepseek.com`
 - `API Key`：你的模型服务密钥
-- `模型名称`：例如 `deepseek-chat`
+- `模型名称`：例如 `deepseek-v4-flash`
 
 保存设置时，扩展会自动发起一次连接测试，并提示连接结果。
 
@@ -39,7 +40,7 @@ AI小译是一款 Chrome 浏览器翻译扩展。它可以接入你自己的 Ope
 
 ```text
 Base URL: https://api.deepseek.com
-模型名称: deepseek-chat
+模型名称: deepseek-v4-flash
 ```
 
 插件会自动把常见 Base URL 补全为 Chat Completions 请求地址。你也可以直接填写完整地址，例如：
@@ -48,41 +49,19 @@ Base URL: https://api.deepseek.com
 https://api.deepseek.com/chat/completions
 ```
 
-## 接口要求
-
-AI小译调用 OpenAI 兼容的 Chat Completions 接口：
-
-```http
-POST /v1/chat/completions
-Authorization: Bearer YOUR_API_KEY
-Content-Type: application/json
-```
-
-请求体示例：
-
-```json
-{
-  "model": "your-model",
-  "messages": [
-    { "role": "system", "content": "翻译指令" },
-    { "role": "user", "content": "待翻译文本" }
-  ],
-  "temperature": 0.2
-}
-```
-
 ## 数据与隐私
 
-- API Key、Base URL、模型名称、翻译历史、Token 统计和界面偏好均保存在本机 Chrome 扩展存储中。
+- API Key、Base URL、模型名称、单词缓存、单词本、翻译历史、Token 统计和界面偏好均保存在本机 Chrome 扩展存储中。
 - 扩展不会内置任何第三方统计 SDK。
 - 翻译请求只会发送到你配置的模型接口。
 - 翻译历史默认保留最近 7 天，也可以在历史记录页面手动清空。
 - Token 统计只记录接口返回的用量信息，不代表你的服务商账户余额。
+- 单词资料缓存默认保留 90 天，最多 3,000 条；单词本收藏不会随缓存过期自动删除。
 
 ## 项目结构
 
 ```text
-chrome-ai-translator/
+ai-xiaoyi/
 ├── manifest.json      # Chrome MV3 扩展清单
 ├── background.js      # 模型请求、配置、历史和 Token 统计
 ├── content.js         # 网页注入、整页翻译、划词翻译、助理模式
@@ -90,24 +69,6 @@ chrome-ai-translator/
 ├── popup.css          # 扩展弹窗样式
 ├── popup.js           # 扩展弹窗交互
 └── icons/             # 扩展图标
-```
-
-## 本地开发
-
-修改代码后，在 `chrome://extensions/` 中点击扩展卡片上的“重新加载”，然后刷新目标网页。
-
-发布前可以运行基础语法检查：
-
-```bash
-node --check background.js
-node --check content.js
-node --check popup.js
-```
-
-打包为 zip：
-
-```bash
-zip -r ../chrome-ai-translator.zip . -x '.DS_Store'
 ```
 
 ## 常见问题

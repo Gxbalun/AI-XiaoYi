@@ -1,5 +1,5 @@
 (() => {
-const CONTENT_VERSION = "1.0.33";
+const CONTENT_VERSION = "1.0.34";
 if (window.__MODEL_TRANSLATOR_CONTENT_VERSION__ === CONTENT_VERSION) {
   return;
 }
@@ -8,6 +8,7 @@ window.__MODEL_TRANSLATOR_CONTENT_VERSION__ = CONTENT_VERSION;
 
 const BUTTON_ID = "model-translator-selection-button-v2";
 const POPOVER_ID = "model-translator-popover-v2";
+const WORD_POPOVER_ID = "model-translator-word-popover-v2";
 const FLOATING_HOST_ID = "model-translator-floating-host-v2";
 const FLOATING_POSITION_KEY = "floatingButtonPosition";
 const FLOATING_PANEL_PREFERENCES_KEY = "floatingPanelPreferences";
@@ -76,6 +77,8 @@ document.addEventListener("mouseup", (event) => {
 document.addEventListener("click", (event) => {
   if (isTranslatorUiTarget(event.target)) return;
   if (document.getElementById(POPOVER_ID)) removeSelectionUi();
+  const wordPopover = document.getElementById(WORD_POPOVER_ID);
+  if (wordPopover && wordPopover.dataset.pinned !== "true") removeWordPopover();
   if (pageTranslationEnabled) {
     window.setTimeout(scheduleLazyPageTranslation, 220);
   }
@@ -194,7 +197,7 @@ async function translateSelection(event) {
 
     if (!response?.ok) throw new Error(response?.error || "翻译失败");
     if (popover.isConnected) {
-      renderPopoverContent(popover, response.translation);
+      renderPopoverContent(popover, response.translation, false, currentSelection);
       positionPopover(popover, rect);
     }
   } catch (error) {
@@ -255,7 +258,7 @@ function renderPopoverLoading(popover) {
   popover.append(body, footer);
 }
 
-function renderPopoverContent(popover, text, isError = false) {
+function renderPopoverContent(popover, text, isError = false, sourceText = "") {
   popover.textContent = "";
   if (isError) {
     popover.dataset.state = "error";
@@ -280,7 +283,16 @@ function renderPopoverContent(popover, text, isError = false) {
 
   const body = document.createElement("div");
   body.className = "model-translator-popover-body";
-  body.textContent = text;
+  if (!isError && /[A-Za-z]/.test(sourceText)) {
+    const source = document.createElement("div");
+    source.className = "model-translator-popover-source";
+    appendLearnableText(source, sourceText, sourceText);
+    body.append(source);
+  }
+  const translation = document.createElement("div");
+  translation.className = "model-translator-popover-translation";
+  appendLearnableText(translation, text, text);
+  body.append(translation);
 
   const footer = document.createElement("div");
   footer.className = "model-translator-popover-footer";
@@ -291,6 +303,113 @@ function renderPopoverContent(popover, text, isError = false) {
 
   footer.append(typeLabel, copyButton);
   popover.append(body, footer);
+}
+
+function appendLearnableText(container, text, sentence) {
+  const value = String(text || "");
+  const fragment = document.createDocumentFragment();
+  const pattern = /[A-Za-z]+(?:['-][A-Za-z]+)*/g;
+  let index = 0;
+  for (const match of value.matchAll(pattern)) {
+    fragment.append(value.slice(index, match.index));
+    const word = document.createElement("button");
+    word.type = "button";
+    word.className = "model-translator-learn-word";
+    word.textContent = match[0];
+    word.title = "点击查看单词学习资料";
+    word.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openWordPopover(match[0], sentence, word.getBoundingClientRect());
+    });
+    fragment.append(word);
+    index = match.index + match[0].length;
+  }
+  fragment.append(value.slice(index));
+  container.append(fragment);
+}
+
+async function openWordPopover(word, sentence, anchorRect) {
+  removeWordPopover();
+  const popover = document.createElement("section");
+  popover.id = WORD_POPOVER_ID;
+  popover.dataset.pinned = "false";
+  popover.innerHTML = '<div class="model-translator-word-loading">正在查词<span class="model-translator-loading-dots" aria-hidden="true"><span></span><span></span><span></span></span></div>';
+  popover.addEventListener("mousedown", stopUiEvent);
+  popover.addEventListener("click", stopUiEvent);
+  document.documentElement.appendChild(popover);
+  positionWordPopover(popover, anchorRect);
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "lookup-english-word", word, sentence });
+    if (!response?.ok) throw new Error(response?.error || "查词失败");
+    if (!popover.isConnected) return;
+    renderWordPopover(popover, response.entry);
+    positionWordPopover(popover, anchorRect);
+  } catch (error) {
+    if (popover.isConnected) {
+      popover.innerHTML = `<div class="model-translator-word-error">${escapeHtml(error.message || String(error))}</div>`;
+      positionWordPopover(popover, anchorRect);
+    }
+  }
+}
+
+function renderWordPopover(popover, entry) {
+  popover.textContent = "";
+  const head = document.createElement("div");
+  head.className = "model-translator-word-head";
+  head.innerHTML = `
+    <div><div class="model-translator-word-title">${escapeHtml(entry.word)}</div><div class="model-translator-word-meta">${escapeHtml([entry.phonetic, entry.partOfSpeech].filter(Boolean).join(" · "))}</div></div>
+    <div class="model-translator-word-tools"><button type="button" data-word-pin title="临时置顶">置顶</button><button type="button" data-word-favorite title="收藏到单词本">${entry.favorite ? "已收藏" : "收藏"}</button><button type="button" data-word-close title="关闭">关闭</button></div>
+  `;
+  const sections = document.createElement("div");
+  sections.className = "model-translator-word-sections";
+  if (entry.contextMeaning) sections.append(createWordSection("当前语境", entry.contextMeaning));
+  sections.append(createWordSection("释义", (entry.meanings || []).map((item) => `• ${item}`).join("\n") || "暂无释义"));
+  if (entry.forms?.length) sections.append(createWordSection("词形", entry.forms.join(" · ")));
+  if (entry.example) sections.append(createWordSection("示例", `${entry.example}${entry.exampleTranslation ? `\n${entry.exampleTranslation}` : ""}`, true));
+  popover.append(head, sections);
+  popover.querySelector("[data-word-close]").addEventListener("click", removeWordPopover);
+  popover.querySelector("[data-word-pin]").addEventListener("click", (event) => {
+    const pinned = popover.dataset.pinned === "true";
+    popover.dataset.pinned = String(!pinned);
+    event.currentTarget.classList.toggle("is-active", !pinned);
+    event.currentTarget.textContent = pinned ? "置顶" : "已置顶";
+  });
+  popover.querySelector("[data-word-favorite]").addEventListener("click", async (event) => {
+    const response = await chrome.runtime.sendMessage({ type: "toggle-word-favorite", entry });
+    if (!response?.ok) {
+      event.currentTarget.textContent = "收藏失败";
+      return;
+    }
+    entry.favorite = response.favorite;
+    event.currentTarget.textContent = entry.favorite ? "已收藏" : "收藏";
+  });
+}
+
+function createWordSection(label, value, example = false) {
+  const section = document.createElement("section");
+  section.className = "model-translator-word-section";
+  const title = document.createElement("div");
+  title.className = "model-translator-word-label";
+  title.textContent = label;
+  const content = document.createElement("div");
+  content.className = `model-translator-word-value${example ? " is-example" : ""}`;
+  content.textContent = value;
+  section.append(title, content);
+  return section;
+}
+
+function positionWordPopover(popover, rect) {
+  const width = Math.min(350, Math.max(270, window.innerWidth - 28));
+  popover.style.width = `${width}px`;
+  const top = Math.min(window.innerHeight - popover.offsetHeight - 12, Math.max(12, rect.bottom + 10));
+  const left = Math.min(window.innerWidth - width - 12, Math.max(12, rect.left));
+  popover.style.top = `${top}px`;
+  popover.style.left = `${left}px`;
+}
+
+function removeWordPopover() {
+  removeElement(WORD_POPOVER_ID);
 }
 
 function positionPopover(popover, rect) {
@@ -529,7 +648,7 @@ function stopPageTranslationObserver() {
 function isRelevantPageMutation(mutation) {
   const target = mutation.target;
   if (!(target instanceof Element)) return false;
-  if (target.closest(`#${BUTTON_ID}, #${POPOVER_ID}, #${FLOATING_HOST_ID}`)) return false;
+  if (target.closest(`#${BUTTON_ID}, #${POPOVER_ID}, #${WORD_POPOVER_ID}, #${FLOATING_HOST_ID}`)) return false;
   if (["SCRIPT", "STYLE", "NOSCRIPT"].includes(target.tagName)) return false;
   return true;
 }
@@ -664,7 +783,7 @@ function collectTextNodes() {
           return NodeFilter.FILTER_REJECT;
         }
         if (translatedNodeSet.has(node)) return NodeFilter.FILTER_REJECT;
-        if (parent.closest(`#${BUTTON_ID}, #${POPOVER_ID}, #${FLOATING_HOST_ID}`)) return NodeFilter.FILTER_REJECT;
+        if (parent.closest(`#${BUTTON_ID}, #${POPOVER_ID}, #${WORD_POPOVER_ID}, #${FLOATING_HOST_ID}`)) return NodeFilter.FILTER_REJECT;
         if (parent.isContentEditable) return NodeFilter.FILTER_REJECT;
         if (!isElementVisible(parent)) return NodeFilter.FILTER_REJECT;
 
@@ -769,7 +888,7 @@ function removeElement(id) {
 }
 
 function isTranslatorUiTarget(target) {
-  return target instanceof Element && Boolean(target.closest(`#${BUTTON_ID}, #${POPOVER_ID}, #${FLOATING_HOST_ID}`));
+  return target instanceof Element && Boolean(target.closest(`#${BUTTON_ID}, #${POPOVER_ID}, #${WORD_POPOVER_ID}, #${FLOATING_HOST_ID}`));
 }
 
 function stopUiEvent(event) {
@@ -1697,9 +1816,58 @@ function initFloatingLauncher() {
       transform: translateY(0) scale(0.96);
     }
 
-    .result-wrap textarea {
+    .result-wrap textarea,
+    .floating-learning-result {
       padding-right: 54px;
       background: #f8fafc;
+    }
+
+    .floating-learning-result {
+      box-sizing: border-box;
+      width: 100%;
+      min-height: 92px;
+      overflow: auto;
+      padding: 9px 54px 9px 10px;
+      border: 1px solid #d8dee8;
+      border-radius: 12px;
+      color: #111827;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .floating-learning-result:empty::before {
+      content: attr(data-placeholder);
+      color: #94a3b8;
+    }
+
+    .floating-learning-source {
+      margin-bottom: 7px;
+      padding-bottom: 7px;
+      border-bottom: 1px solid #e5eaf2;
+      color: #64748b;
+      font-size: 11px;
+    }
+
+    .floating-learn-word {
+      display: inline;
+      margin: 0;
+      padding: 0 1px;
+      border: 0;
+      border-radius: 3px;
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+      font: inherit;
+      line-height: inherit;
+    }
+
+    .floating-learn-word:hover {
+      background: #ecf5ff;
+      color: #409eff;
+      text-decoration: underline;
+      text-underline-offset: 2px;
     }
 
     .empty {
@@ -2430,7 +2598,7 @@ function renderFloatingSelfTranslate({ title, status, body }) {
     </div>
     <textarea id="floatingSourceText" placeholder="输入要翻译的内容"></textarea>
     <div class="result-wrap">
-      <textarea id="floatingResultText" readonly placeholder="翻译结果"></textarea>
+      <div id="floatingResultText" class="floating-learning-result" role="textbox" aria-readonly="true" data-placeholder="翻译结果"></div>
       <button class="copy-mini" id="floatingCopyResult" type="button">复制</button>
     </div>
   `;
@@ -2481,10 +2649,10 @@ function renderFloatingSelfTranslate({ title, status, body }) {
       selfSourceLanguage: sourceLanguage.value,
       selfTargetLanguage: target.value
     });
-    if (result.value.trim()) {
+    if (getFloatingLearningText(result)) {
       const sourceText = source.value;
-      source.value = result.value;
-      result.value = sourceText;
+      source.value = getFloatingLearningText(result);
+      setFloatingLearningResult(result, sourceText);
     }
   });
 
@@ -2498,7 +2666,7 @@ function renderFloatingSelfTranslate({ title, status, body }) {
     const button = event.currentTarget;
     button.disabled = true;
     button.textContent = "翻译中";
-    result.value = "";
+    setFloatingLearningResult(result, "");
     setFloatingStatus(status, "正在翻译");
     try {
       const response = await chrome.runtime.sendMessage({
@@ -2508,7 +2676,7 @@ function renderFloatingSelfTranslate({ title, status, body }) {
         targetLanguage: target.value
       });
       if (!response?.ok) throw new Error(response?.error || "翻译失败");
-      result.value = response.translation || "";
+      setFloatingLearningResult(result, response.translation || "", text);
       setFloatingStatus(status, "翻译完成");
     } catch (error) {
       setFloatingStatus(status, error.message || String(error), true);
@@ -2519,13 +2687,57 @@ function renderFloatingSelfTranslate({ title, status, body }) {
   });
 
   body.querySelector("#floatingCopyResult").addEventListener("click", async () => {
-    if (!result.value.trim()) {
+    if (!getFloatingLearningText(result)) {
       setFloatingStatus(status, "暂无译文", true);
       return;
     }
-    const copied = await copyText(result.value);
+    const copied = await copyText(getFloatingLearningText(result));
     setFloatingStatus(status, copied ? "已复制" : "复制失败", !copied);
   });
+}
+
+function getFloatingLearningText(element) {
+  return String(element.dataset.translation ?? element.textContent ?? "").trim();
+}
+
+function setFloatingLearningResult(element, text, sourceText = "") {
+  element.textContent = "";
+  const value = String(text || "");
+  element.dataset.translation = value;
+  if (!value && !sourceText) return;
+  if (sourceText && /[A-Za-z]/.test(sourceText)) {
+    const source = document.createElement("div");
+    source.className = "floating-learning-source";
+    appendFloatingLearningWords(source, String(sourceText), String(sourceText));
+    element.append(source);
+  }
+  const translation = document.createElement("div");
+  translation.className = "floating-learning-translation";
+  appendFloatingLearningWords(translation, value, value);
+  element.append(translation);
+}
+
+function appendFloatingLearningWords(container, value, sentence) {
+  const fragment = document.createDocumentFragment();
+  const pattern = /[A-Za-z]+(?:['-][A-Za-z]+)*/g;
+  let index = 0;
+  for (const match of value.matchAll(pattern)) {
+    fragment.append(value.slice(index, match.index));
+    const word = document.createElement("button");
+    word.type = "button";
+    word.className = "floating-learn-word";
+    word.textContent = match[0];
+    word.title = "点击查看单词学习资料";
+    word.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openWordPopover(match[0], sentence, word.getBoundingClientRect());
+    });
+    fragment.append(word);
+    index = match.index + match[0].length;
+  }
+  fragment.append(value.slice(index));
+  container.append(fragment);
 }
 
 async function renderFloatingHistory({ title, status, body }) {
@@ -2702,6 +2914,7 @@ function modeLabel(mode, count) {
   if (mode === "selection") return "划词翻译";
   if (mode === "page") return `整页翻译${count ? ` · ${count} 段` : ""}`;
   if (mode === "self") return "自助翻译";
+  if (mode === "word") return "单词学习";
   if (mode === "test") return "连接测试";
   return "其他";
 }
@@ -2709,6 +2922,7 @@ function modeLabel(mode, count) {
 function modeClass(mode) {
   if (mode === "page") return "page";
   if (mode === "self") return "self";
+  if (mode === "word") return "word";
   if (mode === "test") return "test";
   return "selection";
 }
@@ -2889,6 +3103,34 @@ style.textContent = `
     white-space: pre-wrap;
   }
 
+  #${POPOVER_ID} .model-translator-popover-source {
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #eef2f7;
+    color: #64748b;
+    font-size: 12px;
+  }
+
+  #${POPOVER_ID} .model-translator-learn-word {
+    display: inline;
+    margin: 0;
+    padding: 0 1px;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+    line-height: inherit;
+  }
+
+  #${POPOVER_ID} .model-translator-learn-word:hover {
+    background: #ecf5ff;
+    color: #409eff;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
   #${POPOVER_ID} .model-translator-popover-footer {
     display: flex;
     align-items: center;
@@ -2934,6 +3176,102 @@ style.textContent = `
     border-color: rgba(185, 28, 28, 0.3);
     color: #991b1b;
     background: #fff7f7;
+  }
+
+  #${WORD_POPOVER_ID} {
+    position: fixed;
+    z-index: 2147483647;
+    box-sizing: border-box;
+    max-height: min(410px, calc(100vh - 24px));
+    overflow: auto;
+    padding: 12px;
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.98);
+    color: #1f2937;
+    box-shadow: 0 18px 46px rgba(15, 23, 42, 0.22);
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+
+  #${WORD_POPOVER_ID} .model-translator-word-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 96px;
+    gap: 7px;
+    color: #409eff;
+    font-weight: 650;
+  }
+
+  #${WORD_POPOVER_ID} .model-translator-word-error {
+    min-height: 64px;
+    display: grid;
+    place-items: center;
+    color: #b91c1c;
+    text-align: center;
+  }
+
+  #${WORD_POPOVER_ID} .model-translator-word-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  #${WORD_POPOVER_ID} .model-translator-word-title {
+    color: #1f2937;
+    font-size: 21px;
+    font-weight: 800;
+  }
+
+  #${WORD_POPOVER_ID} .model-translator-word-meta {
+    margin-top: 2px;
+    color: #64748b;
+    font-size: 11px;
+  }
+
+  #${WORD_POPOVER_ID} .model-translator-word-tools {
+    display: flex;
+    gap: 4px;
+    margin-left: auto;
+  }
+
+  #${WORD_POPOVER_ID} .model-translator-word-tools button {
+    min-height: 24px;
+    padding: 0 6px;
+    border: 1px solid #d8dee8;
+    border-radius: 8px;
+    background: #fff;
+    color: #64748b;
+    cursor: pointer;
+    font: 500 10px/22px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+
+  #${WORD_POPOVER_ID} .model-translator-word-tools button:hover,
+  #${WORD_POPOVER_ID} .model-translator-word-tools button.is-active {
+    border-color: #b3d8ff;
+    background: #ecf5ff;
+    color: #2563eb;
+  }
+
+  #${WORD_POPOVER_ID} .model-translator-word-section {
+    margin-top: 10px;
+  }
+
+  #${WORD_POPOVER_ID} .model-translator-word-label {
+    color: #a16207;
+    font-size: 10px;
+  }
+
+  #${WORD_POPOVER_ID} .model-translator-word-value {
+    margin-top: 3px;
+    white-space: pre-wrap;
+    color: #334155;
+    line-height: 1.55;
+  }
+
+  #${WORD_POPOVER_ID} .model-translator-word-value.is-example {
+    color: #64748b;
+    font-style: italic;
   }
 `;
 document.documentElement.appendChild(style);
