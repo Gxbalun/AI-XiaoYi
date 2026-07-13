@@ -219,24 +219,42 @@ async function lookupEnglishWord(message) {
 
   const settings = await getSettings();
   validateSettings(settings);
-  const result = await callChatCompletions(settings, [
+  const result = await callWordDictionary(settings, word, sentence);
+  await recordTokenUsage(result.usage, { mode: "word", model: result.model });
+
+  const parsed = parseWordJson(result.content);
+  if (!parsed) {
+    throw new Error("模型没有给出单词资料。它返回了思考草稿而不是最终结果，请重试一次；若持续出现，请换用不输出思考过程的模型。");
+  }
+  const entry = normalizeWordEntry(parsed, word, sentence);
+  const cache = pruneWordCache(stored[WORD_CACHE_KEY] || {});
+  cache[key] = { ...entry, key, updatedAt: Date.now() };
+  await chrome.storage.local.set({ [WORD_CACHE_KEY]: trimWordCache(cache) });
+  return { ...cache[key], favorite: isWordFavorite(wordBook, cache[key], key) };
+}
+
+async function callWordDictionary(settings, word, sentence) {
+  const messages = [
     {
       role: "system",
       content:
-        "You are an English learning dictionary. Return only valid JSON, no markdown. " +
+        "You are an English learning dictionary. Return the final JSON object immediately. Do not reveal reasoning, planning, or markdown. " +
         "Use this exact schema: {\"word\":\"\",\"lemma\":\"\",\"phonetic\":\"\",\"partOfSpeech\":\"\",\"meanings\":[\"\"],\"forms\":[\"\"],\"example\":\"\",\"exampleTranslation\":\"\",\"contextMeaning\":\"\"}. " +
         "Write Chinese for meanings, forms, and explanations. Provide at most 3 concise meanings, 4 useful forms, and one short example. " +
         "If context is supplied, contextMeaning must explain the meaning in that context."
     },
     { role: "user", content: JSON.stringify({ word, context: sentence }) }
-  ], { maxTokens: 420 });
-  await recordTokenUsage(result.usage, { mode: "word", model: result.model });
+  ];
 
-  const entry = normalizeWordEntry(parseWordJson(result.content), word, sentence, result.content);
-  const cache = pruneWordCache(stored[WORD_CACHE_KEY] || {});
-  cache[key] = { ...entry, key, updatedAt: Date.now() };
-  await chrome.storage.local.set({ [WORD_CACHE_KEY]: trimWordCache(cache) });
-  return { ...cache[key], favorite: isWordFavorite(wordBook, cache[key], key) };
+  try {
+    return await callChatCompletions(settings, messages, {
+      maxTokens: 1200,
+      responseFormat: { type: "json_object" }
+    });
+  } catch (error) {
+    if (!/response_format|json_object|unsupported|not support/i.test(error?.message || "")) throw error;
+    return callChatCompletions(settings, messages, { maxTokens: 1200 });
+  }
 }
 
 function parseWordJson(content) {
@@ -266,22 +284,17 @@ function parseWordJson(content) {
   return null;
 }
 
-function normalizeWordEntry(value, word, sentence, fallbackText = "") {
+function normalizeWordEntry(value, word, sentence) {
   const list = (input, limit) => Array.isArray(input)
     ? input.map((item) => String(item || "").trim()).filter(Boolean).slice(0, limit)
     : [];
-  const readableFallback = String(fallbackText || "")
-    .replace(/```(?:json)?/gi, "")
-    .replace(/<think>[\s\S]*?<\/think>/gi, "")
-    .trim()
-    .slice(0, 1200);
   const meanings = list(value?.meanings, 3);
   return {
     word: String(value?.word || word).trim() || word,
     lemma: String(value?.lemma || word).trim() || word,
     phonetic: String(value?.phonetic || "").trim(),
     partOfSpeech: String(value?.partOfSpeech || "").trim(),
-    meanings: meanings.length ? meanings : (readableFallback ? [readableFallback] : ["模型暂未给出释义，请重试一次。"]),
+    meanings: meanings.length ? meanings : ["模型暂未给出释义，请重试一次。"],
     forms: list(value?.forms, 4),
     example: String(value?.example || "").trim(),
     exampleTranslation: String(value?.exampleTranslation || "").trim(),
@@ -432,7 +445,8 @@ async function callChatCompletions(settings, messages, options = {}) {
         model,
         messages,
         temperature: Number(settings.temperature) || 0.2,
-        ...(options.maxTokens ? { max_tokens: options.maxTokens } : {})
+        ...(options.maxTokens ? { max_tokens: options.maxTokens } : {}),
+        ...(options.responseFormat ? { response_format: options.responseFormat } : {})
       })
     });
   } catch (error) {
