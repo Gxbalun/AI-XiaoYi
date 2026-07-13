@@ -145,8 +145,9 @@ function handleSelectionChange() {
 
   const selection = window.getSelection();
   const text = selection?.toString().trim() || "";
+  const selectedWord = getSingleEnglishWord(text);
 
-  if (!text || text.length < 2 || selection.rangeCount === 0) {
+  if (!text || (!selectedWord && text.length < 2) || selection.rangeCount === 0) {
     removeSelectionUi();
     return;
   }
@@ -173,6 +174,7 @@ function showSelectionButton(range) {
     button.addEventListener("click", translateSelection);
     document.documentElement.appendChild(button);
   }
+  button.title = getSingleEnglishWord(currentSelection) ? "查看单词详情" : "翻译选中文本";
   button.dataset.readyAt = String(Date.now() + 300);
 
   Object.assign(button.style, {
@@ -190,6 +192,12 @@ async function translateSelection(event) {
 
   const rect = currentRange ? getRangeRect(currentRange) : button.getBoundingClientRect();
   const buttonRect = button.getBoundingClientRect();
+  const selectedWord = getSingleEnglishWord(currentSelection);
+  if (selectedWord) {
+    removeSelectionButton();
+    await openWordPopover(selectedWord, currentSelection, rect || buttonRect);
+    return;
+  }
   const popover = showLoadingPopover(rect, buttonRect);
   removeSelectionButton();
 
@@ -211,6 +219,14 @@ async function translateSelection(event) {
       positionPopover(popover, rect);
     }
   }
+}
+
+function getSingleEnglishWord(value) {
+  const normalized = String(value || "")
+    .trim()
+    .replace(/^["“‘([{<]+/, "")
+    .replace(/["”’\)\]}>.,!?;:，。！？；：]+$/, "");
+  return /^[A-Za-z]+(?:['’][A-Za-z]+|-[A-Za-z]+)*$/.test(normalized) ? normalized : null;
 }
 
 function showLoadingPopover(rect, sourceRect) {
@@ -358,13 +374,25 @@ async function openWordPopover(word, sentence, anchorRect) {
   }
 }
 
+function openSavedWordPopover(entry, anchorRect) {
+  removeWordPopover();
+  const popover = document.createElement("section");
+  popover.id = WORD_POPOVER_ID;
+  popover.dataset.pinned = "false";
+  popover.addEventListener("mousedown", stopUiEvent);
+  popover.addEventListener("click", stopUiEvent);
+  document.documentElement.appendChild(popover);
+  renderWordPopover(popover, { ...entry, favorite: true });
+  positionWordPopover(popover, anchorRect);
+}
+
 function renderWordPopover(popover, entry) {
   popover.textContent = "";
   const head = document.createElement("div");
   head.className = "model-translator-word-head";
   head.innerHTML = `
-    <div class="model-translator-word-intro"><div class="model-translator-word-language"><span class="model-translator-word-speaker" aria-hidden="true"></span>英语</div><div class="model-translator-word-title">${escapeHtml(entry.word)}</div><div class="model-translator-word-meta">${escapeHtml(entry.phonetic || "暂无音标")}</div></div>
-    <div class="model-translator-word-tools"><button type="button" data-word-pin title="临时置顶" aria-label="临时置顶"><span class="model-translator-word-tool-icon icon-pin" aria-hidden="true"></span></button><button type="button" data-word-favorite class="${entry.favorite ? "is-active" : ""}" title="${entry.favorite ? "移出单词本" : "收藏到单词本"}" aria-label="${entry.favorite ? "移出单词本" : "收藏到单词本"}"><span class="model-translator-word-tool-icon icon-star" aria-hidden="true"></span></button><button type="button" data-word-close title="关闭" aria-label="关闭"><span class="model-translator-word-tool-icon icon-close" aria-hidden="true"></span></button></div>
+    <div class="model-translator-word-intro"><div class="model-translator-word-language">英语</div><div class="model-translator-word-title">${escapeHtml(entry.word)}</div><div class="model-translator-word-meta">${escapeHtml(entry.phonetic || "暂无音标")}</div></div>
+    <div class="model-translator-word-tools"><button type="button" data-word-pin data-tip="临时置顶" title="临时置顶" aria-label="临时置顶"><span class="model-translator-word-tool-icon icon-pin" aria-hidden="true"></span></button><button type="button" data-word-favorite class="${entry.favorite ? "is-active" : ""}" title="${entry.favorite ? "移出单词本" : "收藏到单词本"}" aria-label="${entry.favorite ? "移出单词本" : "收藏到单词本"}"><span class="model-translator-word-tool-icon icon-star ${entry.favorite ? "is-filled" : ""}" aria-hidden="true"></span></button><button type="button" data-word-close title="关闭" aria-label="关闭"><span class="model-translator-word-tool-icon icon-close" aria-hidden="true"></span></button></div>
   `;
   const sections = document.createElement("div");
   sections.className = "model-translator-word-sections";
@@ -373,6 +401,7 @@ function renderWordPopover(popover, entry) {
   if (entry.forms?.length) sections.append(createWordSection("词形", entry.forms.join(" · ")));
   if (entry.example) sections.append(createWordSection("示例", `${entry.example}${entry.exampleTranslation ? `\n${entry.exampleTranslation}` : ""}`, true));
   popover.append(head, sections);
+  enableWordPopoverDrag(popover, head);
   popover.querySelector("[data-word-close]").addEventListener("click", removeWordPopover);
   popover.querySelector("[data-word-pin]").addEventListener("click", (event) => {
     const pinned = popover.dataset.pinned === "true";
@@ -380,19 +409,33 @@ function renderWordPopover(popover, entry) {
     event.currentTarget.classList.toggle("is-active", !pinned);
     event.currentTarget.title = pinned ? "临时置顶" : "取消置顶";
     event.currentTarget.setAttribute("aria-label", pinned ? "临时置顶" : "取消置顶");
+    event.currentTarget.dataset.tip = event.currentTarget.title;
   });
   popover.querySelector("[data-word-favorite]").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const icon = button.querySelector(".icon-star");
+    const previousFavorite = Boolean(entry.favorite);
+    entry.favorite = !previousFavorite;
+    button.classList.toggle("is-active", entry.favorite);
+    icon?.classList.toggle("is-filled", entry.favorite);
+    button.title = entry.favorite ? "移出单词本" : "收藏到单词本";
+    button.setAttribute("aria-label", button.title);
     const response = await chrome.runtime.sendMessage({ type: "toggle-word-favorite", entry });
     if (!response?.ok) {
-      event.currentTarget.title = response?.error || "收藏失败";
-      event.currentTarget.classList.add("is-error");
-      window.setTimeout(() => event.currentTarget.classList.remove("is-error"), 1200);
+      entry.favorite = previousFavorite;
+      button.classList.toggle("is-active", previousFavorite);
+      icon?.classList.toggle("is-filled", previousFavorite);
+      button.title = response?.error || "收藏失败";
+      button.setAttribute("aria-label", button.title);
+      button.classList.add("is-error");
+      window.setTimeout(() => button.classList.remove("is-error"), 1200);
       return;
     }
     entry.favorite = response.favorite;
-    event.currentTarget.classList.toggle("is-active", entry.favorite);
-    event.currentTarget.title = entry.favorite ? "移出单词本" : "收藏到单词本";
-    event.currentTarget.setAttribute("aria-label", entry.favorite ? "移出单词本" : "收藏到单词本");
+    button.classList.toggle("is-active", entry.favorite);
+    icon?.classList.toggle("is-filled", entry.favorite);
+    button.title = entry.favorite ? "移出单词本" : "收藏到单词本";
+    button.setAttribute("aria-label", button.title);
   });
 }
 
@@ -416,12 +459,53 @@ function formatWordPartOfSpeech(value) {
 }
 
 function positionWordPopover(popover, rect) {
+  if (popover.dataset.manualPosition === "true") return;
   const width = Math.min(350, Math.max(270, window.innerWidth - 28));
   popover.style.width = `${width}px`;
   const top = Math.min(window.innerHeight - popover.offsetHeight - 12, Math.max(12, rect.bottom + 10));
   const left = Math.min(window.innerWidth - width - 12, Math.max(12, rect.left));
   popover.style.top = `${top}px`;
   popover.style.left = `${left}px`;
+}
+
+function enableWordPopoverDrag(popover, head) {
+  let dragging = false;
+  let startLeft = 0;
+  let startTop = 0;
+  let pointerX = 0;
+  let pointerY = 0;
+  head.addEventListener("pointerdown", (event) => {
+    if (event.target.closest("button")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = popover.getBoundingClientRect();
+    dragging = true;
+    startLeft = rect.left;
+    startTop = rect.top;
+    pointerX = event.clientX;
+    pointerY = event.clientY;
+    head.classList.add("is-dragging");
+    head.setPointerCapture(event.pointerId);
+  });
+  head.addEventListener("pointermove", (event) => {
+    if (!dragging) return;
+    event.preventDefault();
+    const width = popover.offsetWidth;
+    const height = popover.offsetHeight;
+    const nextLeft = startLeft + event.clientX - pointerX;
+    const nextTop = startTop + event.clientY - pointerY;
+    const left = Math.min(Math.max(12, nextLeft), Math.max(12, window.innerWidth - width - 12));
+    const top = Math.min(Math.max(12, nextTop), Math.max(12, window.innerHeight - height - 12));
+    popover.dataset.manualPosition = "true";
+    popover.style.left = `${left}px`;
+    popover.style.top = `${top}px`;
+  });
+  const finishDrag = () => {
+    dragging = false;
+    head.classList.remove("is-dragging");
+  };
+  head.addEventListener("pointerup", finishDrag);
+  head.addEventListener("lostpointercapture", finishDrag);
 }
 
 function removeWordPopover() {
@@ -979,6 +1063,7 @@ function initFloatingLauncher() {
         <button class="tool-button tool-button-primary-page" type="button" data-action="page" data-tip="整页翻译"><span class="ui-icon icon-page" aria-hidden="true"></span></button>
         <button class="tool-button tool-button-primary-self" type="button" data-action="self" data-tip="自助翻译"><span class="ui-icon icon-spark" aria-hidden="true"></span></button>
         <button class="tool-button" type="button" data-action="history" data-tip="历史记录"><span class="ui-icon icon-history" aria-hidden="true"></span></button>
+        <button class="tool-button" type="button" data-action="wordbook" data-tip="单词本"><span class="ui-icon icon-book" aria-hidden="true"></span></button>
         <button class="tool-button" type="button" data-action="usage" data-tip="Token 用量"><span class="ui-icon icon-token" aria-hidden="true"></span></button>
         <button class="tool-button" type="button" data-action="settings" data-tip="AI 配置"><span class="ui-icon icon-gear" aria-hidden="true"></span></button>
       </nav>
@@ -991,8 +1076,8 @@ function initFloatingLauncher() {
       <header class="panel-head">
         <h2></h2>
         <div class="panel-controls" hidden>
-          <button class="panel-tool panel-pin-toggle" type="button" title="临时置顶" aria-label="临时置顶" aria-pressed="false"><span class="panel-tool-icon icon-pin" aria-hidden="true"></span></button>
-          <button class="panel-tool panel-opacity-toggle" type="button" title="调节透明度" aria-label="调节透明度" aria-expanded="false"><span class="panel-tool-icon icon-opacity" aria-hidden="true"></span></button>
+          <button class="panel-tool panel-pin-toggle" type="button" data-tip="临时置顶" title="临时置顶" aria-label="临时置顶" aria-pressed="false"><span class="panel-tool-icon icon-pin" aria-hidden="true"></span></button>
+          <button class="panel-tool panel-opacity-toggle" type="button" data-tip="调节透明度" title="调节透明度" aria-label="调节透明度" aria-expanded="false"><span class="panel-tool-icon icon-opacity" aria-hidden="true"></span></button>
           <div class="panel-opacity-control" hidden><div class="panel-opacity-slider"><span class="panel-opacity-track" aria-hidden="true"></span><input class="panel-opacity-range" type="range" min="${PANEL_OPACITY_MIN}" max="${PANEL_OPACITY_MAX}" value="${PANEL_OPACITY_MAX}" aria-label="窗口透明度" /><span class="panel-opacity-handle" aria-hidden="true"></span><span class="panel-opacity-ticks"><button type="button" data-opacity="${PANEL_OPACITY_MIN}" style="--point-position: 0%" aria-label="低透明度" title="低透明度"></button><button type="button" data-opacity="${PANEL_OPACITY_MID}" style="--point-position: ${((PANEL_OPACITY_MID - PANEL_OPACITY_MIN) / (PANEL_OPACITY_MAX - PANEL_OPACITY_MIN)) * 100}%" aria-label="中透明度" title="中透明度"></button><button type="button" data-opacity="${PANEL_OPACITY_MAX}" style="--point-position: 100%" aria-label="正常透明度" title="正常透明度"></button></span></div></div>
         </div>
         <button class="panel-close" type="button" aria-label="关闭">×</button>
@@ -1249,6 +1334,11 @@ function initFloatingLauncher() {
       -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round' d='M12 7v5l3 2M5 7H2V4m.6 3A9 9 0 1 1 3 16'/%3E%3C/svg%3E");
     }
 
+    .icon-book {
+      mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.15' stroke-linecap='round' stroke-linejoin='round' d='M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21V5.5Zm16 0A2.5 2.5 0 0 0 17.5 3H13v16h4.5A2.5 2.5 0 0 1 20 21V5.5Z'/%3E%3C/svg%3E");
+      -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.15' stroke-linecap='round' stroke-linejoin='round' d='M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21V5.5Zm16 0A2.5 2.5 0 0 0 17.5 3H13v16h4.5A2.5 2.5 0 0 1 20 21V5.5Z'/%3E%3C/svg%3E");
+    }
+
     .icon-token {
       mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M4 5h7v7H4V5Zm9 0h7v7h-7V5ZM4 14h7v5H4v-5Zm9 0h7v5h-7v-5Z'/%3E%3C/svg%3E");
       -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M4 5h7v7H4V5Zm9 0h7v7h-7V5ZM4 14h7v5H4v-5Zm9 0h7v5h-7v-5Z'/%3E%3C/svg%3E");
@@ -1443,6 +1533,7 @@ function initFloatingLauncher() {
     }
 
     .panel-tool {
+      position: relative;
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -1455,6 +1546,34 @@ function initFloatingLauncher() {
       color: #64748b;
       cursor: pointer;
       transition: transform 140ms ease, background 140ms ease, color 140ms ease;
+    }
+
+    .panel-tool[data-tip]::after {
+      content: attr(data-tip);
+      position: absolute;
+      z-index: 6;
+      top: calc(100% + 7px);
+      right: 0;
+      width: max-content;
+      max-width: 120px;
+      padding: 5px 7px;
+      border-radius: 7px;
+      background: rgba(15, 23, 42, 0.9);
+      color: #fff;
+      font-size: 10px;
+      font-weight: 600;
+      line-height: 1.2;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(-3px);
+      transition: opacity 120ms ease, transform 120ms ease;
+      white-space: nowrap;
+    }
+
+    .panel-tool[data-tip]:hover::after,
+    .panel-tool[data-tip]:focus-visible::after {
+      opacity: 1;
+      transform: translateY(0);
     }
 
     .panel-tool:hover {
@@ -1491,8 +1610,8 @@ function initFloatingLauncher() {
     }
 
     .icon-pin {
-      mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='m15 4 5 5-4 1.2-3.6 3.6.4 4.2-2.1 2.1-3.2-5.4L2 11.5l2.1-2.1 4.2.4L12 6.2 15 4Zm-3 10-4 4'/%3E%3C/svg%3E");
-      -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='m15 4 5 5-4 1.2-3.6 3.6.4 4.2-2.1 2.1-3.2-5.4L2 11.5l2.1-2.1 4.2.4L12 6.2 15 4Zm-3 10-4 4'/%3E%3C/svg%3E");
+      mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M9 3h6v5l3 3v2h-5v8h-2v-8H6v-2l3-3V3Zm2 2v3.8L8.8 11h6.4L13 8.8V5h-2Z'/%3E%3C/svg%3E");
+      -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M9 3h6v5l3 3v2h-5v8h-2v-8H6v-2l3-3V3Zm2 2v3.8L8.8 11h6.4L13 8.8V5h-2Z'/%3E%3C/svg%3E");
     }
 
     .icon-opacity {
@@ -2032,6 +2151,74 @@ function initFloatingLauncher() {
       -webkit-line-clamp: 3;
     }
 
+    .floating-word-book-list {
+      display: grid;
+      gap: 7px;
+    }
+
+    .floating-word-book-item {
+      display: grid;
+      gap: 5px;
+      padding: 9px;
+      border: 1px solid #eef2f7;
+      border-radius: 10px;
+      background: #fbfdff;
+      cursor: pointer;
+      transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
+    }
+
+    .floating-word-book-item:hover {
+      border-color: #dbeafe;
+      background: #f8fbff;
+      transform: translateY(-1px);
+    }
+
+    .floating-word-book-head {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+    }
+
+    .floating-word-book-word {
+      min-width: 0;
+      color: #1f2937;
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .floating-word-book-meta {
+      overflow: hidden;
+      color: #94a3b8;
+      font-size: 10px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .floating-word-book-meaning {
+      color: #475569;
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .floating-word-book-remove {
+      flex: 0 0 auto;
+      min-height: 24px;
+      margin-left: auto;
+      padding: 0 7px;
+      border: 1px solid #fecaca;
+      border-radius: 8px;
+      background: #fff;
+      color: #dc2626;
+      cursor: pointer;
+      font-size: 10px;
+    }
+
+    .floating-word-book-remove:hover {
+      background: #fff1f2;
+      transform: translateY(-1px);
+    }
+
     .history-more {
       color: #64748b;
       font-size: 10px;
@@ -2194,6 +2381,7 @@ function initFloatingLauncher() {
     panelPinToggle.setAttribute("aria-pressed", String(state.panelPinned));
     panelPinToggle.title = state.panelPinned ? "取消置顶" : "临时置顶";
     panelPinToggle.setAttribute("aria-label", state.panelPinned ? "取消置顶" : "临时置顶");
+    panelPinToggle.dataset.tip = panelPinToggle.title;
   };
   const resetPanelPin = () => {
     state.panelPinned = false;
@@ -2554,8 +2742,76 @@ function renderFloatingPanel(action, refs) {
     renderFloatingSelfTranslate(refs);
   } else if (action === "history") {
     renderFloatingHistory(refs);
+  } else if (action === "wordbook") {
+    renderFloatingWordBook(refs);
   } else if (action === "usage") {
     renderFloatingUsage(refs);
+  }
+}
+
+async function renderFloatingWordBook({ title, status, body }) {
+  title.textContent = "单词本";
+  body.innerHTML = '<div class="toolbar"><input id="floatingWordBookSearch" class="history-search" type="search" placeholder="搜索单词" autocomplete="off" /></div><div id="floatingWordBookList" class="floating-word-book-list"><div class="empty">读取中...</div></div>';
+  const search = body.querySelector("#floatingWordBookSearch");
+  const list = body.querySelector("#floatingWordBookList");
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "get-word-book" });
+    if (!response?.ok) throw new Error(response?.error || "读取单词本失败");
+    const words = response.words || [];
+    const renderList = () => {
+      const keyword = search.value.trim().toLowerCase();
+      const filtered = words.filter((item) => !keyword || [item.word, item.lemma, item.partOfSpeech, ...(item.meanings || [])]
+        .join(" ").toLowerCase().includes(keyword));
+      if (!filtered.length) {
+        list.innerHTML = `<div class="empty">${keyword ? "没有找到匹配的单词" : "单词本还是空的"}</div>`;
+        return;
+      }
+      list.innerHTML = filtered.map((item) => `
+        <article class="floating-word-book-item" data-word-key="${escapeHtml(item.key)}" tabindex="0">
+          <div class="floating-word-book-head">
+            <span class="floating-word-book-word">${escapeHtml(item.word || item.lemma)}</span>
+            <span class="floating-word-book-meta">${escapeHtml([item.phonetic, item.partOfSpeech].filter(Boolean).join(" · "))}</span>
+            <button class="floating-word-book-remove" type="button" data-remove-word="${escapeHtml(item.key)}">删除</button>
+          </div>
+          <div class="floating-word-book-meaning">${escapeHtml((item.meanings || []).join("；") || item.contextMeaning || "暂无释义")}</div>
+        </article>
+      `).join("");
+      list.querySelectorAll("[data-remove-word]").forEach((button) => {
+        button.addEventListener("click", async (event) => {
+          event.stopPropagation();
+          const response = await chrome.runtime.sendMessage({ type: "remove-word-book-entry", key: button.dataset.removeWord });
+          if (!response?.ok) {
+            setFloatingStatus(status, response?.error || "删除失败", true);
+            return;
+          }
+          const index = words.findIndex((item) => item.key === button.dataset.removeWord);
+          if (index >= 0) words.splice(index, 1);
+          renderList();
+        });
+      });
+      list.querySelectorAll(".floating-word-book-item").forEach((item) => {
+        const openEntry = () => {
+          const entry = words.find((word) => word.key === item.dataset.wordKey);
+          if (entry) openSavedWordPopover(entry, item.getBoundingClientRect());
+        };
+        item.addEventListener("click", (event) => {
+          if (event.target.closest("[data-remove-word]")) return;
+          event.stopPropagation();
+          openEntry();
+        });
+        item.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            openEntry();
+          }
+        });
+      });
+    };
+    search.addEventListener("input", renderList);
+    renderList();
+  } catch (error) {
+    list.innerHTML = `<div class="empty">${escapeHtml(error.message || String(error))}</div>`;
+    setFloatingStatus(status, error.message || String(error), true);
   }
 }
 
@@ -3231,6 +3487,12 @@ style.textContent = `
     display: flex;
     align-items: flex-start;
     gap: 10px;
+    cursor: grab;
+    touch-action: none;
+  }
+
+  #${WORD_POPOVER_ID} .model-translator-word-head.is-dragging {
+    cursor: grabbing;
   }
 
   #${WORD_POPOVER_ID} .model-translator-word-title {
@@ -3253,6 +3515,7 @@ style.textContent = `
   }
 
   #${WORD_POPOVER_ID} .model-translator-word-tools button {
+    position: relative;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -3266,6 +3529,32 @@ style.textContent = `
     color: #64748b;
     cursor: pointer;
     transition: transform 140ms ease, background 140ms ease, border-color 140ms ease, color 140ms ease;
+  }
+
+  #${WORD_POPOVER_ID} .model-translator-word-tools button[data-tip]::after {
+    content: attr(data-tip);
+    position: absolute;
+    z-index: 3;
+    top: calc(100% + 6px);
+    right: 0;
+    padding: 5px 7px;
+    border-radius: 7px;
+    background: rgba(15, 23, 42, 0.9);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.2;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-3px);
+    transition: opacity 120ms ease, transform 120ms ease;
+    white-space: nowrap;
+  }
+
+  #${WORD_POPOVER_ID} .model-translator-word-tools button[data-tip]:hover::after,
+  #${WORD_POPOVER_ID} .model-translator-word-tools button[data-tip]:focus-visible::after {
+    opacity: 1;
+    transform: translateY(0);
   }
 
   #${WORD_POPOVER_ID} .model-translator-word-tools button:hover,
@@ -3285,8 +3574,7 @@ style.textContent = `
     color: #dc2626;
   }
 
-  #${WORD_POPOVER_ID} .model-translator-word-tool-icon,
-  #${WORD_POPOVER_ID} .model-translator-word-speaker {
+  #${WORD_POPOVER_ID} .model-translator-word-tool-icon {
     display: inline-block;
     width: 14px;
     height: 14px;
@@ -3299,10 +3587,10 @@ style.textContent = `
     -webkit-mask-size: 14px 14px;
   }
 
-  #${WORD_POPOVER_ID} .icon-pin { mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='m15 4 5 5-4 1.2-3.6 3.6.4 4.2-2.1 2.1-3.2-5.4L2 11.5l2.1-2.1 4.2.4L12 6.2 15 4Zm-3 10-4 4'/%3E%3C/svg%3E"); -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='m15 4 5 5-4 1.2-3.6 3.6.4 4.2-2.1 2.1-3.2-5.4L2 11.5l2.1-2.1 4.2.4L12 6.2 15 4Zm-3 10-4 4'/%3E%3C/svg%3E"); }
+  #${WORD_POPOVER_ID} .icon-pin { mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M9 3h6v5l3 3v2h-5v8h-2v-8H6v-2l3-3V3Zm2 2v3.8L8.8 11h6.4L13 8.8V5h-2Z'/%3E%3C/svg%3E"); -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M9 3h6v5l3 3v2h-5v8h-2v-8H6v-2l3-3V3Zm2 2v3.8L8.8 11h6.4L13 8.8V5h-2Z'/%3E%3C/svg%3E"); }
   #${WORD_POPOVER_ID} .icon-star { mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linejoin='round' d='m12 3 2.8 5.8 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.7l6.2-.9L12 3Z'/%3E%3C/svg%3E"); -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linejoin='round' d='m12 3 2.8 5.8 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.7l6.2-.9L12 3Z'/%3E%3C/svg%3E"); }
+  #${WORD_POPOVER_ID} [data-word-favorite].is-active .icon-star, #${WORD_POPOVER_ID} .icon-star.is-filled { mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='m12 2.8 2.9 5.9 6.5.9-4.7 4.5 1.1 6.4-5.8-3.1-5.8 3.1 1.1-6.4-4.7-4.5 6.5-.9L12 2.8Z'/%3E%3C/svg%3E"); -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='m12 2.8 2.9 5.9 6.5.9-4.7 4.5 1.1 6.4-5.8-3.1-5.8 3.1 1.1-6.4-4.7-4.5 6.5-.9L12 2.8Z'/%3E%3C/svg%3E"); }
   #${WORD_POPOVER_ID} .icon-close { mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' d='m7 7 10 10m0-10L7 17'/%3E%3C/svg%3E"); -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' d='m7 7 10 10m0-10L7 17'/%3E%3C/svg%3E"); }
-  #${WORD_POPOVER_ID} .model-translator-word-speaker { width: 12px; height: 12px; mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='M4 10h4l5-4v12l-5-4H4v-4Zm13-1a4 4 0 0 1 0 6m2-9a8 8 0 0 1 0 12'/%3E%3C/svg%3E"); -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='M4 10h4l5-4v12l-5-4H4v-4Zm13-1a4 4 0 0 1 0 6m2-9a8 8 0 0 1 0 12'/%3E%3C/svg%3E"); }
 
   #${WORD_POPOVER_ID} .model-translator-word-language {
     display: flex;

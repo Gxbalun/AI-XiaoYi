@@ -805,8 +805,8 @@ function renderWordStudy(entry) {
   card.className = "word-study-card";
   card.innerHTML = `
     <div class="word-study-head">
-      <div class="word-study-intro"><div class="word-study-language"><span class="word-study-speaker" aria-hidden="true"></span>英语</div><div class="word-study-word">${escapeHtml(entry.word)}</div><div class="word-study-phonetic">${escapeHtml(entry.phonetic || "暂无音标")}</div></div>
-      <div class="word-study-tools"><button type="button" data-pin title="临时置顶" aria-label="临时置顶"><span class="word-study-tool-icon icon-pin" aria-hidden="true"></span></button><button type="button" data-favorite class="${entry.favorite ? "is-active" : ""}" title="${entry.favorite ? "移出单词本" : "收藏到单词本"}" aria-label="${entry.favorite ? "移出单词本" : "收藏到单词本"}"><span class="word-study-tool-icon icon-star" aria-hidden="true"></span></button><button type="button" data-close title="关闭" aria-label="关闭"><span class="word-study-tool-icon icon-close" aria-hidden="true"></span></button></div>
+      <div class="word-study-intro"><div class="word-study-language">英语</div><div class="word-study-word">${escapeHtml(entry.word)}</div><div class="word-study-phonetic">${escapeHtml(entry.phonetic || "暂无音标")}</div></div>
+      <div class="word-study-tools"><button type="button" data-pin data-tip="临时置顶" title="临时置顶" aria-label="临时置顶"><span class="word-study-tool-icon icon-pin" aria-hidden="true"></span></button><button type="button" data-favorite class="${entry.favorite ? "is-active" : ""}" title="${entry.favorite ? "移出单词本" : "收藏到单词本"}" aria-label="${entry.favorite ? "移出单词本" : "收藏到单词本"}"><span class="word-study-tool-icon icon-star ${entry.favorite ? "is-filled" : ""}" aria-hidden="true"></span></button><button type="button" data-close title="关闭" aria-label="关闭"><span class="word-study-tool-icon icon-close" aria-hidden="true"></span></button></div>
     </div>
     ${entry.contextMeaning ? `<div class="word-study-section"><div class="word-study-label">当前语境</div><div class="word-study-context">${escapeHtml(entry.contextMeaning)}</div></div>` : ""}
     <div class="word-study-section"><div class="word-study-label">${escapeHtml(formatWordPartOfSpeech(entry.partOfSpeech))}</div><ol class="word-study-meanings">${(entry.meanings || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>暂无释义</li>"}</ol></div>
@@ -814,25 +814,82 @@ function renderWordStudy(entry) {
     ${entry.example ? `<div class="word-study-section"><div class="word-study-label">示例</div><div class="word-study-example">${escapeHtml(entry.example)}${entry.exampleTranslation ? `<br>${escapeHtml(entry.exampleTranslation)}` : ""}</div></div>` : ""}
   `;
   wordStudyDialog.replaceChildren(card);
+  enableWordStudyDrag(card);
   card.querySelector("[data-close]").addEventListener("click", closeWordStudy);
   card.querySelector("[data-pin]").addEventListener("click", (event) => {
     wordStudyPinned = !wordStudyPinned;
     event.currentTarget.classList.toggle("is-active", wordStudyPinned);
     event.currentTarget.title = wordStudyPinned ? "取消置顶" : "临时置顶";
     event.currentTarget.setAttribute("aria-label", wordStudyPinned ? "取消置顶" : "临时置顶");
+    event.currentTarget.dataset.tip = event.currentTarget.title;
   });
   card.querySelector("[data-favorite]").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const icon = button.querySelector(".icon-star");
+    const previousFavorite = Boolean(entry.favorite);
+    entry.favorite = !previousFavorite;
+    button.classList.toggle("is-active", entry.favorite);
+    icon?.classList.toggle("is-filled", entry.favorite);
+    button.title = entry.favorite ? "移出单词本" : "收藏到单词本";
+    button.setAttribute("aria-label", button.title);
     const response = await chrome.runtime.sendMessage({ type: "toggle-word-favorite", entry });
     if (!response?.ok) {
+      entry.favorite = previousFavorite;
+      button.classList.toggle("is-active", previousFavorite);
+      icon?.classList.toggle("is-filled", previousFavorite);
       showStatus(response?.error || "收藏失败", true);
       return;
     }
     entry.favorite = response.favorite;
-    event.currentTarget.classList.toggle("is-active", entry.favorite);
-    event.currentTarget.title = entry.favorite ? "移出单词本" : "收藏到单词本";
-    event.currentTarget.setAttribute("aria-label", entry.favorite ? "移出单词本" : "收藏到单词本");
+    button.classList.toggle("is-active", entry.favorite);
+    icon?.classList.toggle("is-filled", entry.favorite);
+    button.title = entry.favorite ? "移出单词本" : "收藏到单词本";
+    button.setAttribute("aria-label", button.title);
     showStatus(entry.favorite ? "已加入单词本" : "已移出单词本");
   });
+}
+
+function enableWordStudyDrag(card) {
+  const head = card.querySelector(".word-study-head");
+  if (!head) return;
+  let dragging = false;
+  let startLeft = 0;
+  let startTop = 0;
+  let pointerX = 0;
+  let pointerY = 0;
+  head.addEventListener("pointerdown", (event) => {
+    if (event.target.closest("button")) return;
+    event.preventDefault();
+    const rect = card.getBoundingClientRect();
+    dragging = true;
+    startLeft = rect.left;
+    startTop = rect.top;
+    pointerX = event.clientX;
+    pointerY = event.clientY;
+    card.classList.add("is-dragging");
+    card.style.left = `${rect.left}px`;
+    card.style.top = `${rect.top}px`;
+    card.style.transform = "none";
+    head.setPointerCapture(event.pointerId);
+  });
+  head.addEventListener("pointermove", (event) => {
+    if (!dragging) return;
+    event.preventDefault();
+    const width = card.offsetWidth;
+    const height = card.offsetHeight;
+    const nextLeft = startLeft + event.clientX - pointerX;
+    const nextTop = startTop + event.clientY - pointerY;
+    const left = Math.min(Math.max(8, nextLeft), Math.max(8, window.innerWidth - width - 8));
+    const top = Math.min(Math.max(8, nextTop), Math.max(8, window.innerHeight - height - 8));
+    card.style.left = `${left}px`;
+    card.style.top = `${top}px`;
+  });
+  const finishDrag = () => {
+    dragging = false;
+    card.classList.remove("is-dragging");
+  };
+  head.addEventListener("pointerup", finishDrag);
+  head.addEventListener("lostpointercapture", finishDrag);
 }
 
 function closeWordStudy() {
