@@ -1,5 +1,5 @@
 (() => {
-const CONTENT_VERSION = "1.0.32";
+const CONTENT_VERSION = "1.0.33";
 if (window.__MODEL_TRANSLATOR_CONTENT_VERSION__ === CONTENT_VERSION) {
   return;
 }
@@ -856,6 +856,7 @@ function initFloatingLauncher() {
       <header class="panel-head">
         <h2></h2>
         <div class="panel-controls" hidden>
+          <button class="panel-tool panel-pin-toggle" type="button" title="临时置顶" aria-label="临时置顶" aria-pressed="false"><span class="panel-tool-icon icon-pin" aria-hidden="true"></span></button>
           <button class="panel-tool panel-opacity-toggle" type="button" title="调节透明度" aria-label="调节透明度" aria-expanded="false"><span class="panel-tool-icon icon-opacity" aria-hidden="true"></span></button>
           <div class="panel-opacity-control" hidden><div class="panel-opacity-slider"><span class="panel-opacity-track" aria-hidden="true"></span><input class="panel-opacity-range" type="range" min="${PANEL_OPACITY_MIN}" max="${PANEL_OPACITY_MAX}" value="${PANEL_OPACITY_MAX}" aria-label="窗口透明度" /><span class="panel-opacity-handle" aria-hidden="true"></span><span class="panel-opacity-ticks"><button type="button" data-opacity="${PANEL_OPACITY_MIN}" style="--point-position: 0%" aria-label="低透明度" title="低透明度"></button><button type="button" data-opacity="${PANEL_OPACITY_MID}" style="--point-position: ${((PANEL_OPACITY_MID - PANEL_OPACITY_MIN) / (PANEL_OPACITY_MAX - PANEL_OPACITY_MIN)) * 100}%" aria-label="中透明度" title="中透明度"></button><button type="button" data-opacity="${PANEL_OPACITY_MAX}" style="--point-position: 100%" aria-label="正常透明度" title="正常透明度"></button></span></div></div>
         </div>
@@ -1331,6 +1332,16 @@ function initFloatingLauncher() {
       transform: scale(0.94);
     }
 
+    .panel-tool[hidden] {
+      display: none;
+    }
+
+    .panel-tool.is-active {
+      background: #ecf5ff;
+      color: #409eff;
+      box-shadow: inset 0 0 0 1px rgba(64, 158, 255, 0.14);
+    }
+
     .panel-tool-icon {
       display: inline-flex;
       width: 13px;
@@ -1342,6 +1353,11 @@ function initFloatingLauncher() {
       -webkit-mask-position: center;
       -webkit-mask-repeat: no-repeat;
       -webkit-mask-size: 13px 13px;
+    }
+
+    .icon-pin {
+      mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='m15 4 5 5-4 1.2-3.6 3.6.4 4.2-2.1 2.1-3.2-5.4L2 11.5l2.1-2.1 4.2.4L12 6.2 15 4Zm-3 10-4 4'/%3E%3C/svg%3E");
+      -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='m15 4 5 5-4 1.2-3.6 3.6.4 4.2-2.1 2.1-3.2-5.4L2 11.5l2.1-2.1 4.2.4L12 6.2 15 4Zm-3 10-4 4'/%3E%3C/svg%3E");
     }
 
     .icon-opacity {
@@ -1932,6 +1948,7 @@ function initFloatingLauncher() {
   const panelHead = shadow.querySelector(".panel-head");
   const title = shadow.querySelector(".panel-head h2");
   const panelControls = shadow.querySelector(".panel-controls");
+  const panelPinToggle = shadow.querySelector(".panel-pin-toggle");
   const panelOpacityToggle = shadow.querySelector(".panel-opacity-toggle");
   const panelOpacityControl = shadow.querySelector(".panel-opacity-control");
   const panelOpacitySlider = shadow.querySelector(".panel-opacity-slider");
@@ -1963,10 +1980,11 @@ function initFloatingLauncher() {
     panelPointerY: 0,
     panelOpacity: 100,
     panelOpacityDragging: false,
+    panelPinned: false,
     activeAction: ""
   };
 
-  const supportsPanelControls = (action) => action === "self" || action === "history";
+  const supportsOpacityControls = (action) => action === "self" || action === "history";
   const applyPanelAppearance = (preferences = {}) => {
     state.panelOpacity = Math.min(PANEL_OPACITY_MAX, Math.max(PANEL_OPACITY_MIN, Number(preferences.opacity) || PANEL_OPACITY_MAX));
     const ratio = state.panelOpacity / PANEL_OPACITY_MAX;
@@ -1977,7 +1995,7 @@ function initFloatingLauncher() {
     panelOpacityRange.value = String(state.panelOpacity);
   };
   const savePanelPreferences = async () => {
-    if (!supportsPanelControls(state.activeAction)) return;
+    if (!supportsOpacityControls(state.activeAction)) return;
     const stored = await chrome.storage.local.get({ [FLOATING_PANEL_PREFERENCES_KEY]: {} });
     const preferences = stored[FLOATING_PANEL_PREFERENCES_KEY] || {};
     preferences[state.activeAction] = { opacity: state.panelOpacity };
@@ -1987,12 +2005,30 @@ function initFloatingLauncher() {
     panelOpacityControl.hidden = true;
     panelOpacityToggle.setAttribute("aria-expanded", "false");
   };
-  const configurePanelControls = async (action) => {
-    const enabled = supportsPanelControls(action);
-    panelControls.hidden = !enabled;
+  const updatePanelPinState = () => {
+    panelPinToggle.classList.toggle("is-active", state.panelPinned);
+    panelPinToggle.setAttribute("aria-pressed", String(state.panelPinned));
+    panelPinToggle.title = state.panelPinned ? "取消置顶" : "临时置顶";
+    panelPinToggle.setAttribute("aria-label", state.panelPinned ? "取消置顶" : "临时置顶");
+  };
+  const resetPanelPin = () => {
+    state.panelPinned = false;
+    updatePanelPinState();
+  };
+  const closeFloatingPanel = () => {
+    panel.hidden = true;
+    state.activeAction = "";
     closePanelOpacityControl();
+    resetPanelPin();
+  };
+  const configurePanelControls = async (action) => {
+    const opacityEnabled = supportsOpacityControls(action);
+    panelControls.hidden = false;
+    panelOpacityToggle.hidden = !opacityEnabled;
+    closePanelOpacityControl();
+    updatePanelPinState();
     applyPanelAppearance();
-    if (!enabled) return;
+    if (!opacityEnabled) return;
     const stored = await chrome.storage.local.get({ [FLOATING_PANEL_PREFERENCES_KEY]: {} });
     if (state.activeAction !== action || panel.hidden) return;
     applyPanelAppearance(stored[FLOATING_PANEL_PREFERENCES_KEY]?.[action]);
@@ -2029,11 +2065,18 @@ function initFloatingLauncher() {
 
   document.addEventListener("pointerdown", (event) => {
     const path = event.composedPath();
-    if (path.includes(dismissMenu) || path.includes(dismissTrigger)) return;
-    dismissMenu.hidden = true;
-    dismissTrigger.classList.remove("is-open");
+    const insideDismiss = path.includes(dismissMenu) || path.includes(dismissTrigger);
+    const insidePanel = path.includes(panel);
+    const insideLauncher = path.includes(button) || path.includes(menu);
+    if (!insideDismiss) {
+      dismissMenu.hidden = true;
+      dismissTrigger.classList.remove("is-open");
+    }
     if (!panelOpacityControl.hidden && !path.includes(panelOpacityControl) && !path.includes(panelOpacityToggle)) {
       closePanelOpacityControl();
+    }
+    if (!panel.hidden && !state.panelPinned && !insidePanel && !insideLauncher && !insideDismiss) {
+      closeFloatingPanel();
     }
   });
 
@@ -2117,9 +2160,12 @@ function initFloatingLauncher() {
     saveFloatingPosition(state);
   });
 
-  close.addEventListener("click", () => {
-    panel.hidden = true;
-    state.activeAction = "";
+  close.addEventListener("click", closeFloatingPanel);
+
+  panelPinToggle.addEventListener("click", (event) => {
+    event.stopPropagation();
+    state.panelPinned = !state.panelPinned;
+    updatePanelPinState();
   });
 
   panelOpacityToggle.addEventListener("click", (event) => {
@@ -2184,10 +2230,10 @@ function initFloatingLauncher() {
     }
     const actionRect = actionButton.getBoundingClientRect();
     if (!panel.hidden && state.activeAction === action) {
-      panel.hidden = true;
-      state.activeAction = "";
+      closeFloatingPanel();
       return;
     }
+    resetPanelPin();
     state.activeAction = action;
     state.panelManualOffsetX = null;
     state.panelManualOffsetY = null;
