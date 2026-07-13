@@ -232,7 +232,7 @@ async function lookupEnglishWord(message) {
   ], { maxTokens: 420 });
   await recordTokenUsage(result.usage, { mode: "word", model: result.model });
 
-  const entry = normalizeWordEntry(parseWordJson(result.content), word, sentence);
+  const entry = normalizeWordEntry(parseWordJson(result.content), word, sentence, result.content);
   const cache = pruneWordCache(stored[WORD_CACHE_KEY] || {});
   cache[key] = { ...entry, key, updatedAt: Date.now() };
   await chrome.storage.local.set({ [WORD_CACHE_KEY]: trimWordCache(cache) });
@@ -245,26 +245,43 @@ function parseWordJson(content) {
     .replace(/^```json\s*/i, "")
     .replace(/^```\s*/i, "")
     .replace(/\s*```$/i, "");
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    const start = cleaned.indexOf("{");
-    const end = cleaned.lastIndexOf("}");
-    if (start >= 0 && end > start) return JSON.parse(cleaned.slice(start, end + 1));
-    throw new Error("模型没有返回可解析的单词资料。");
+  const fenced = String(content || "").match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim();
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  const candidates = [
+    cleaned,
+    fenced,
+    start >= 0 && end > start ? cleaned.slice(start, end + 1) : ""
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (typeof parsed === "string") return JSON.parse(parsed);
+      if (parsed && typeof parsed === "object") return parsed;
+    } catch {
+      // Keep trying a more focused JSON candidate before falling back to readable text.
+    }
   }
+  return null;
 }
 
-function normalizeWordEntry(value, word, sentence) {
+function normalizeWordEntry(value, word, sentence, fallbackText = "") {
   const list = (input, limit) => Array.isArray(input)
     ? input.map((item) => String(item || "").trim()).filter(Boolean).slice(0, limit)
     : [];
+  const readableFallback = String(fallbackText || "")
+    .replace(/```(?:json)?/gi, "")
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .trim()
+    .slice(0, 1200);
+  const meanings = list(value?.meanings, 3);
   return {
     word: String(value?.word || word).trim() || word,
     lemma: String(value?.lemma || word).trim() || word,
     phonetic: String(value?.phonetic || "").trim(),
     partOfSpeech: String(value?.partOfSpeech || "").trim(),
-    meanings: list(value?.meanings, 3),
+    meanings: meanings.length ? meanings : (readableFallback ? [readableFallback] : ["模型暂未给出释义，请重试一次。"]),
     forms: list(value?.forms, 4),
     example: String(value?.example || "").trim(),
     exampleTranslation: String(value?.exampleTranslation || "").trim(),
