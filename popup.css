@@ -1036,8 +1036,17 @@ h2 {
   gap: 8px;
 }
 
+.word-study-language {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #64748b;
+  font-size: 11px;
+}
+
 .word-study-word {
-  color: #1f2937;
+  margin-top: 3px;
+  color: #e88b2d;
   font-size: 20px;
   font-weight: 800;
 }
@@ -1055,15 +1064,61 @@ h2 {
 }
 
 .word-study-tools button {
-  min-width: 25px;
-  min-height: 25px;
-  padding: 0 7px;
-  border: 1px solid #d8dee8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  min-width: 26px;
+  min-height: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
   border-radius: 8px;
   background: #fff;
   color: #64748b;
   box-shadow: none;
   font-size: 10px;
+  transition: transform 140ms ease, background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.word-study-tools button:active {
+  transform: scale(0.9);
+}
+
+.word-study-tool-icon,
+.word-study-speaker {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  background-color: currentColor;
+  mask-position: center;
+  mask-repeat: no-repeat;
+  mask-size: 14px 14px;
+  -webkit-mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size: 14px 14px;
+}
+
+.word-study-speaker {
+  width: 12px;
+  height: 12px;
+  mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='M4 10h4l5-4v12l-5-4H4v-4Zm13-1a4 4 0 0 1 0 6m2-9a8 8 0 0 1 0 12'/%3E%3C/svg%3E");
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='M4 10h4l5-4v12l-5-4H4v-4Zm13-1a4 4 0 0 1 0 6m2-9a8 8 0 0 1 0 12'/%3E%3C/svg%3E");
+}
+
+.word-study-tool-icon.icon-pin {
+  mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='m15 4 5 5-4 1.2-3.6 3.6.4 4.2-2.1 2.1-3.2-5.4L2 11.5l2.1-2.1 4.2.4L12 6.2 15 4Zm-3 10-4 4'/%3E%3C/svg%3E");
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='m15 4 5 5-4 1.2-3.6 3.6.4 4.2-2.1 2.1-3.2-5.4L2 11.5l2.1-2.1 4.2.4L12 6.2 15 4Zm-3 10-4 4'/%3E%3C/svg%3E");
+}
+
+.word-study-tool-icon.icon-star {
+  mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linejoin='round' d='m12 3 2.8 5.8 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.7l6.2-.9L12 3Z'/%3E%3C/svg%3E");
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linejoin='round' d='m12 3 2.8 5.8 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.7l6.2-.9L12 3Z'/%3E%3C/svg%3E");
+}
+
+.word-study-tool-icon.icon-close {
+  mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' d='m7 7 10 10m0-10L7 17'/%3E%3C/svg%3E");
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' d='m7 7 10 10m0-10L7 17'/%3E%3C/svg%3E");
 }
 
 .word-study-tools button:hover,
@@ -1074,12 +1129,12 @@ h2 {
 }
 
 .word-study-section {
-  margin-top: 10px;
+  margin-top: 13px;
 }
 
 .word-study-label {
-  color: #a16207;
-  font-size: 10px;
+  color: #8b5cf6;
+  font-size: 11px;
 }
 
 .word-study-context,
@@ -1090,6 +1145,10 @@ h2 {
   color: #334155;
   font-size: 12px;
   line-height: 1.5;
+}
+
+.word-study-meanings {
+  color: #2563eb;
 }
 
 .word-study-meanings {

@@ -75,10 +75,15 @@ document.addEventListener("mouseup", (event) => {
 });
 
 document.addEventListener("click", (event) => {
+  const target = event.target instanceof Element ? event.target : null;
+  const wordPopover = document.getElementById(WORD_POPOVER_ID);
+  const clickedWord = event.composedPath().some((node) => node instanceof Element && node.matches(".model-translator-learn-word, .floating-learn-word"));
+  const clickedWordPopover = Boolean(target?.closest(`#${WORD_POPOVER_ID}`));
+  if (wordPopover && !clickedWord && !clickedWordPopover && wordPopover.dataset.pinned !== "true") {
+    removeWordPopover();
+  }
   if (isTranslatorUiTarget(event.target)) return;
   if (document.getElementById(POPOVER_ID)) removeSelectionUi();
-  const wordPopover = document.getElementById(WORD_POPOVER_ID);
-  if (wordPopover && wordPopover.dataset.pinned !== "true") removeWordPopover();
   if (pageTranslationEnabled) {
     window.setTimeout(scheduleLazyPageTranslation, 220);
   }
@@ -358,13 +363,13 @@ function renderWordPopover(popover, entry) {
   const head = document.createElement("div");
   head.className = "model-translator-word-head";
   head.innerHTML = `
-    <div><div class="model-translator-word-title">${escapeHtml(entry.word)}</div><div class="model-translator-word-meta">${escapeHtml([entry.phonetic, entry.partOfSpeech].filter(Boolean).join(" · "))}</div></div>
-    <div class="model-translator-word-tools"><button type="button" data-word-pin title="临时置顶">置顶</button><button type="button" data-word-favorite title="收藏到单词本">${entry.favorite ? "已收藏" : "收藏"}</button><button type="button" data-word-close title="关闭">关闭</button></div>
+    <div class="model-translator-word-intro"><div class="model-translator-word-language"><span class="model-translator-word-speaker" aria-hidden="true"></span>英语</div><div class="model-translator-word-title">${escapeHtml(entry.word)}</div><div class="model-translator-word-meta">${escapeHtml(entry.phonetic || "暂无音标")}</div></div>
+    <div class="model-translator-word-tools"><button type="button" data-word-pin title="临时置顶" aria-label="临时置顶"><span class="model-translator-word-tool-icon icon-pin" aria-hidden="true"></span></button><button type="button" data-word-favorite class="${entry.favorite ? "is-active" : ""}" title="${entry.favorite ? "移出单词本" : "收藏到单词本"}" aria-label="${entry.favorite ? "移出单词本" : "收藏到单词本"}"><span class="model-translator-word-tool-icon icon-star" aria-hidden="true"></span></button><button type="button" data-word-close title="关闭" aria-label="关闭"><span class="model-translator-word-tool-icon icon-close" aria-hidden="true"></span></button></div>
   `;
   const sections = document.createElement("div");
   sections.className = "model-translator-word-sections";
   if (entry.contextMeaning) sections.append(createWordSection("当前语境", entry.contextMeaning));
-  sections.append(createWordSection("释义", (entry.meanings || []).map((item) => `• ${item}`).join("\n") || "暂无释义"));
+  sections.append(createWordSection(formatWordPartOfSpeech(entry.partOfSpeech), (entry.meanings || []).map((item) => `• ${item}`).join("\n") || "暂无释义", false, "is-meaning"));
   if (entry.forms?.length) sections.append(createWordSection("词形", entry.forms.join(" · ")));
   if (entry.example) sections.append(createWordSection("示例", `${entry.example}${entry.exampleTranslation ? `\n${entry.exampleTranslation}` : ""}`, true));
   popover.append(head, sections);
@@ -373,22 +378,27 @@ function renderWordPopover(popover, entry) {
     const pinned = popover.dataset.pinned === "true";
     popover.dataset.pinned = String(!pinned);
     event.currentTarget.classList.toggle("is-active", !pinned);
-    event.currentTarget.textContent = pinned ? "置顶" : "已置顶";
+    event.currentTarget.title = pinned ? "临时置顶" : "取消置顶";
+    event.currentTarget.setAttribute("aria-label", pinned ? "临时置顶" : "取消置顶");
   });
   popover.querySelector("[data-word-favorite]").addEventListener("click", async (event) => {
     const response = await chrome.runtime.sendMessage({ type: "toggle-word-favorite", entry });
     if (!response?.ok) {
-      event.currentTarget.textContent = "收藏失败";
+      event.currentTarget.title = response?.error || "收藏失败";
+      event.currentTarget.classList.add("is-error");
+      window.setTimeout(() => event.currentTarget.classList.remove("is-error"), 1200);
       return;
     }
     entry.favorite = response.favorite;
-    event.currentTarget.textContent = entry.favorite ? "已收藏" : "收藏";
+    event.currentTarget.classList.toggle("is-active", entry.favorite);
+    event.currentTarget.title = entry.favorite ? "移出单词本" : "收藏到单词本";
+    event.currentTarget.setAttribute("aria-label", entry.favorite ? "移出单词本" : "收藏到单词本");
   });
 }
 
-function createWordSection(label, value, example = false) {
+function createWordSection(label, value, example = false, variant = "") {
   const section = document.createElement("section");
-  section.className = "model-translator-word-section";
+  section.className = `model-translator-word-section ${variant}`.trim();
   const title = document.createElement("div");
   title.className = "model-translator-word-label";
   title.textContent = label;
@@ -397,6 +407,12 @@ function createWordSection(label, value, example = false) {
   content.textContent = value;
   section.append(title, content);
   return section;
+}
+
+function formatWordPartOfSpeech(value) {
+  const source = String(value || "").trim().toLowerCase();
+  const names = { noun: "名词", verb: "动词", adjective: "形容词", adverb: "副词", pronoun: "代词", preposition: "介词", conjunction: "连词", interjection: "感叹词" };
+  return names[source] || value || "释义";
 }
 
 function positionWordPopover(popover, rect) {
@@ -3184,9 +3200,9 @@ style.textContent = `
     box-sizing: border-box;
     max-height: min(410px, calc(100vh - 24px));
     overflow: auto;
-    padding: 12px;
+    padding: 14px;
     border: 1px solid rgba(148, 163, 184, 0.3);
-    border-radius: 16px;
+    border-radius: 14px;
     background: rgba(255, 255, 255, 0.98);
     color: #1f2937;
     box-shadow: 0 18px 46px rgba(15, 23, 42, 0.22);
@@ -3214,13 +3230,14 @@ style.textContent = `
   #${WORD_POPOVER_ID} .model-translator-word-head {
     display: flex;
     align-items: flex-start;
-    gap: 8px;
+    gap: 10px;
   }
 
   #${WORD_POPOVER_ID} .model-translator-word-title {
-    color: #1f2937;
-    font-size: 21px;
-    font-weight: 800;
+    margin-top: 3px;
+    color: #e88b2d;
+    font-size: 22px;
+    font-weight: 750;
   }
 
   #${WORD_POPOVER_ID} .model-translator-word-meta {
@@ -3231,42 +3248,88 @@ style.textContent = `
 
   #${WORD_POPOVER_ID} .model-translator-word-tools {
     display: flex;
-    gap: 4px;
+    gap: 5px;
     margin-left: auto;
   }
 
   #${WORD_POPOVER_ID} .model-translator-word-tools button {
-    min-height: 24px;
-    padding: 0 6px;
-    border: 1px solid #d8dee8;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    min-height: 26px;
+    padding: 0;
+    border: 1px solid transparent;
     border-radius: 8px;
-    background: #fff;
+    background: transparent;
     color: #64748b;
     cursor: pointer;
-    font: 500 10px/22px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    transition: transform 140ms ease, background 140ms ease, border-color 140ms ease, color 140ms ease;
   }
 
   #${WORD_POPOVER_ID} .model-translator-word-tools button:hover,
   #${WORD_POPOVER_ID} .model-translator-word-tools button.is-active {
     border-color: #b3d8ff;
     background: #ecf5ff;
-    color: #2563eb;
+    color: #409eff;
+  }
+
+  #${WORD_POPOVER_ID} .model-translator-word-tools button:active {
+    transform: scale(0.9);
+  }
+
+  #${WORD_POPOVER_ID} .model-translator-word-tools button.is-error {
+    border-color: #fecaca;
+    background: #fff1f2;
+    color: #dc2626;
+  }
+
+  #${WORD_POPOVER_ID} .model-translator-word-tool-icon,
+  #${WORD_POPOVER_ID} .model-translator-word-speaker {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    background: currentColor;
+    mask-position: center;
+    mask-repeat: no-repeat;
+    mask-size: 14px 14px;
+    -webkit-mask-position: center;
+    -webkit-mask-repeat: no-repeat;
+    -webkit-mask-size: 14px 14px;
+  }
+
+  #${WORD_POPOVER_ID} .icon-pin { mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='m15 4 5 5-4 1.2-3.6 3.6.4 4.2-2.1 2.1-3.2-5.4L2 11.5l2.1-2.1 4.2.4L12 6.2 15 4Zm-3 10-4 4'/%3E%3C/svg%3E"); -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='m15 4 5 5-4 1.2-3.6 3.6.4 4.2-2.1 2.1-3.2-5.4L2 11.5l2.1-2.1 4.2.4L12 6.2 15 4Zm-3 10-4 4'/%3E%3C/svg%3E"); }
+  #${WORD_POPOVER_ID} .icon-star { mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linejoin='round' d='m12 3 2.8 5.8 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.7l6.2-.9L12 3Z'/%3E%3C/svg%3E"); -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linejoin='round' d='m12 3 2.8 5.8 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.7l6.2-.9L12 3Z'/%3E%3C/svg%3E"); }
+  #${WORD_POPOVER_ID} .icon-close { mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' d='m7 7 10 10m0-10L7 17'/%3E%3C/svg%3E"); -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' d='m7 7 10 10m0-10L7 17'/%3E%3C/svg%3E"); }
+  #${WORD_POPOVER_ID} .model-translator-word-speaker { width: 12px; height: 12px; mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='M4 10h4l5-4v12l-5-4H4v-4Zm13-1a4 4 0 0 1 0 6m2-9a8 8 0 0 1 0 12'/%3E%3C/svg%3E"); -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='M4 10h4l5-4v12l-5-4H4v-4Zm13-1a4 4 0 0 1 0 6m2-9a8 8 0 0 1 0 12'/%3E%3C/svg%3E"); }
+
+  #${WORD_POPOVER_ID} .model-translator-word-language {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    color: #64748b;
+    font-size: 11px;
   }
 
   #${WORD_POPOVER_ID} .model-translator-word-section {
-    margin-top: 10px;
+    margin-top: 13px;
   }
 
   #${WORD_POPOVER_ID} .model-translator-word-label {
-    color: #a16207;
-    font-size: 10px;
+    color: #8b5cf6;
+    font-size: 11px;
   }
 
   #${WORD_POPOVER_ID} .model-translator-word-value {
     margin-top: 3px;
     white-space: pre-wrap;
-    color: #334155;
-    line-height: 1.55;
+    color: #475569;
+    line-height: 1.62;
+  }
+
+  #${WORD_POPOVER_ID} .model-translator-word-section.is-meaning .model-translator-word-value {
+    color: #2563eb;
   }
 
   #${WORD_POPOVER_ID} .model-translator-word-value.is-example {
