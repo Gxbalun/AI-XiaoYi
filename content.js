@@ -1239,7 +1239,8 @@ function initFloatingLauncher() {
       z-index: 1;
       left: 50%;
       bottom: 34px;
-      display: grid;
+      display: flex;
+      flex-direction: column-reverse;
       gap: 6px;
       padding: 8px 6px;
       border: 1px solid rgba(226, 232, 240, 0.95);
@@ -1260,6 +1261,7 @@ function initFloatingLauncher() {
     .floating-wrapper.is-near-top .floating-menu {
       top: 34px;
       bottom: auto;
+      flex-direction: column;
       transform: translate(-50%, -14px) scale(0.96);
     }
 
