@@ -772,6 +772,7 @@ button:disabled {
   height: 12px;
   mask-size: 12px 12px;
   -webkit-mask-size: 12px 12px;
+  transform: translateY(-1px);
 }
 
 .page-display-trigger[data-tip] {

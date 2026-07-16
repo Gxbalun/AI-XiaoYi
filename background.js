@@ -68,6 +68,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === "clear-word-book") {
+    clearWordBook()
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: friendlyErrorMessage(error) }));
+    return true;
+  }
+
   if (message?.type === "cancel-page-translation") {
     cancelActiveRequest(message.requestId);
     sendResponse({ ok: true });
@@ -327,6 +334,10 @@ async function getWordBook() {
 async function removeWordBookEntry(key) {
   const stored = await chrome.storage.local.get({ [WORD_BOOK_KEY]: [] });
   await chrome.storage.local.set({ [WORD_BOOK_KEY]: (stored[WORD_BOOK_KEY] || []).filter((item) => item.key !== key) });
+}
+
+async function clearWordBook() {
+  await chrome.storage.local.set({ [WORD_BOOK_KEY]: [] });
 }
 
 function normalizeWordKey(word) {

@@ -1,5 +1,5 @@
 (() => {
-const CONTENT_VERSION = "1.0.35";
+const CONTENT_VERSION = "1.1.1";
 if (window.__MODEL_TRANSLATOR_CONTENT_VERSION__ === CONTENT_VERSION) {
   return;
 }
@@ -3194,11 +3194,12 @@ function renderFloatingPanel(action, refs) {
 
 async function renderFloatingWordBook({ title, status, body }) {
   title.textContent = "单词本";
-  body.innerHTML = '<div class="toolbar floating-word-book-toolbar"><input id="floatingWordBookSearch" class="history-search" type="search" placeholder="搜索单词" autocomplete="off" /><div id="floatingWordBookSortControl" class="floating-word-book-sort-control"><button id="floatingWordBookSortTrigger" class="floating-word-book-sort-trigger" type="button" data-tip="排序：收藏时间（新到旧）" title="排序：收藏时间（新到旧）" aria-label="单词排序" aria-expanded="false"><span class="floating-word-book-filter-icon" aria-hidden="true"></span></button><div id="floatingWordBookSortMenu" class="floating-word-book-sort-menu" hidden><button type="button" data-sort-kind="saved" data-tip="按收藏时间"><span class="floating-word-book-clock-icon" aria-hidden="true"></span><span class="floating-word-book-sort-direction" aria-hidden="true"></span></button><button type="button" data-sort-kind="alpha" data-tip="按英文首字母"><span class="floating-word-book-alpha-icon" aria-hidden="true">A-z</span><span class="floating-word-book-sort-direction" aria-hidden="true"></span></button></div></div></div><div id="floatingWordBookList" class="floating-word-book-list"><div class="empty">读取中...</div></div>';
+  body.innerHTML = '<div class="toolbar floating-word-book-toolbar"><input id="floatingWordBookSearch" class="history-search" type="search" placeholder="搜索单词" autocomplete="off" /><div id="floatingWordBookSortControl" class="floating-word-book-sort-control"><button id="floatingWordBookSortTrigger" class="floating-word-book-sort-trigger" type="button" data-tip="排序：收藏时间（新到旧）" title="排序：收藏时间（新到旧）" aria-label="单词排序" aria-expanded="false"><span class="floating-word-book-filter-icon" aria-hidden="true"></span></button><div id="floatingWordBookSortMenu" class="floating-word-book-sort-menu" hidden><button type="button" data-sort-kind="saved" data-tip="按收藏时间"><span class="floating-word-book-clock-icon" aria-hidden="true"></span><span class="floating-word-book-sort-direction" aria-hidden="true"></span></button><button type="button" data-sort-kind="alpha" data-tip="按英文首字母"><span class="floating-word-book-alpha-icon" aria-hidden="true">A-z</span><span class="floating-word-book-sort-direction" aria-hidden="true"></span></button></div></div><button id="floatingClearWordBook" class="danger floating-word-book-clear" type="button">清空单词本</button></div><div id="floatingWordBookList" class="floating-word-book-list"><div class="empty">读取中...</div></div>';
   const search = body.querySelector("#floatingWordBookSearch");
   const sortControl = body.querySelector("#floatingWordBookSortControl");
   const sortTrigger = body.querySelector("#floatingWordBookSortTrigger");
   const sortMenu = body.querySelector("#floatingWordBookSortMenu");
+  const clearButton = body.querySelector("#floatingClearWordBook");
   const list = body.querySelector("#floatingWordBookList");
   let sortValue = "saved-desc";
   try {
@@ -3293,6 +3294,19 @@ async function renderFloatingWordBook({ title, status, body }) {
       if (!sortControl.contains(event.target)) {
         sortMenu.hidden = true;
         sortTrigger.setAttribute("aria-expanded", "false");
+      }
+    });
+    clearButton.addEventListener("click", async () => {
+      if (!window.confirm("确定清空单词本吗？")) return;
+      try {
+        const clearResponse = await chrome.runtime.sendMessage({ type: "clear-word-book" });
+        if (!clearResponse?.ok) throw new Error(clearResponse?.error || "清空失败");
+        words.splice(0, words.length);
+        search.value = "";
+        renderList();
+        setFloatingStatus(status, "单词本已清空");
+      } catch (error) {
+        setFloatingStatus(status, error.message || String(error), true);
       }
     });
     search.addEventListener("input", renderList);

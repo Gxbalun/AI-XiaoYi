@@ -4,7 +4,7 @@ const DEFAULT_SETTINGS = {
   model: "gpt-4o-mini",
   targetLanguage: "中文"
 };
-const CONTENT_VERSION = "1.0.35";
+const CONTENT_VERSION = "1.1.1";
 const ASSISTANT_MODE_ENABLED_KEY = "assistantModeEnabled";
 const ASSISTANT_MODE_PAUSED_UNTIL_KEY = "assistantModePausedUntil";
 const UI_STATE_DEFAULTS = {
@@ -57,6 +57,7 @@ const wordBookSortControl = document.getElementById("wordBookSortControl");
 const wordBookSortTrigger = document.getElementById("wordBookSortTrigger");
 const wordBookSortMenu = document.getElementById("wordBookSortMenu");
 const wordBookContent = document.getElementById("wordBookContent");
+const clearWordBookButton = document.getElementById("clearWordBook");
 const wordStudyDialog = document.getElementById("wordStudyDialog");
 let currentHistory = [];
 let currentWordBook = [];
@@ -86,6 +87,7 @@ clearHistoryButton.addEventListener("click", clearHistory);
 historyFilter.addEventListener("change", () => renderHistory(currentHistory));
 historySearch.addEventListener("input", () => renderHistory(currentHistory));
 clearUsageButton.addEventListener("click", clearUsage);
+clearWordBookButton.addEventListener("click", clearWordBook);
 wordBookSearch.addEventListener("input", renderWordBook);
 wordBookSortTrigger.addEventListener("click", () => {
   wordBookSortMenu.hidden = !wordBookSortMenu.hidden;
@@ -458,6 +460,22 @@ async function showWordBook() {
     renderWordBook();
   } catch (error) {
     wordBookContent.innerHTML = `<div class="empty-state">${escapeHtml(error.message || String(error))}</div>`;
+  }
+}
+
+async function clearWordBook() {
+  const confirmed = window.confirm("确定清空单词本吗？");
+  if (!confirmed) return;
+
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "clear-word-book" });
+    if (!response?.ok) throw new Error(response?.error || "清空失败");
+    currentWordBook = [];
+    wordBookSearch.value = "";
+    renderWordBook();
+    showStatus("单词本已清空");
+  } catch (error) {
+    showStatus(error.message || String(error), true);
   }
 }
 
