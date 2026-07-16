@@ -127,11 +127,19 @@
         </section>
 
         <section class="quick-actions">
-          <button id="translatePage" class="secondary-button core-action" type="button"><span class="with-icon"><span class="ui-icon icon-page" aria-hidden="true">☰</span><span>整页翻译</span></span></button>
-          <button id="restorePage" class="quiet-button" type="button"><span class="with-icon"><span class="ui-icon icon-restore" aria-hidden="true">↺</span><span>恢复原文</span></span></button>
+          <div class="page-actions">
+            <button id="translatePage" class="secondary-button core-action" type="button"><span class="with-icon"><span class="ui-icon icon-page" aria-hidden="true">☰</span><span>整页翻译</span></span></button>
+            <div id="pageDisplayControl" class="page-display-control">
+              <button id="pageDisplayTrigger" class="page-display-trigger" type="button" data-tip="切换译文显示格式" title="切换译文显示格式" aria-label="切换译文显示格式" aria-expanded="false"><span class="ui-icon icon-gear" aria-hidden="true">设置</span></button>
+              <div id="pageDisplayMenu" class="page-display-menu" hidden>
+                <button type="button" data-page-display="translated">仅译文</button>
+                <button type="button" data-page-display="bilingual">双语显示</button>
+              </div>
+            </div>
+          </div>
+          <button id="showWordBook" class="quiet-button" type="button"><span class="with-icon"><span class="ui-icon icon-book" aria-hidden="true">▤</span><span>单词本</span></span></button>
           <button id="showHistory" class="quiet-button" type="button"><span class="with-icon"><span class="ui-icon icon-history" aria-hidden="true">◷</span><span>历史记录</span></span></button>
           <button id="showUsage" class="quiet-button" type="button"><span class="with-icon"><span class="ui-icon icon-token" aria-hidden="true">▥</span><span>Token 用量</span></span></button>
-          <button id="showWordBook" class="quiet-button" type="button"><span class="with-icon"><span class="ui-icon icon-book" aria-hidden="true">▤</span><span>单词本</span></span></button>
         </section>
 
         <p class="selection-hint"><span class="ui-icon icon-tip" aria-hidden="true">💡</span><span>划词后点击选区旁的“译”按钮，即可查看划词翻译。</span></p>
@@ -171,6 +179,13 @@
         </div>
         <div class="page-toolbar word-book-toolbar">
           <input id="wordBookSearch" class="history-search" type="search" placeholder="搜索单词或释义" autocomplete="off" />
+          <div id="wordBookSortControl" class="word-book-sort-control">
+            <button id="wordBookSortTrigger" class="word-book-sort-trigger" type="button" data-tip="排序：收藏时间（新到旧）" title="排序：收藏时间（新到旧）" aria-label="单词排序" aria-expanded="false"><span class="word-book-filter-icon" aria-hidden="true"></span></button>
+            <div id="wordBookSortMenu" class="word-book-sort-menu" hidden>
+              <button type="button" data-sort-kind="saved" data-tip="按收藏时间"><span class="word-book-clock-icon" aria-hidden="true"></span><span class="word-book-sort-direction" aria-hidden="true"></span></button>
+              <button type="button" data-sort-kind="alpha" data-tip="按英文首字母"><span class="word-book-alpha-icon" aria-hidden="true">A-z</span><span class="word-book-sort-direction" aria-hidden="true"></span></button>
+            </div>
+          </div>
         </div>
         <div id="wordBookContent" class="page-content"></div>
       </section>

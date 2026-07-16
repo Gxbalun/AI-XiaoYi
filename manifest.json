@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "AI小译",
   "description": "接入自定义 AI 模型，支持划词翻译、自助翻译、单词学习、历史记录和 Token 用量统计。",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "action": {
     "default_title": "AI小译",
     "default_popup": "popup.html",

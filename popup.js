@@ -4,7 +4,7 @@ const DEFAULT_SETTINGS = {
   model: "gpt-4o-mini",
   targetLanguage: "中文"
 };
-const CONTENT_VERSION = "1.0.34";
+const CONTENT_VERSION = "1.0.35";
 const ASSISTANT_MODE_ENABLED_KEY = "assistantModeEnabled";
 const ASSISTANT_MODE_PAUSED_UNTIL_KEY = "assistantModePausedUntil";
 const UI_STATE_DEFAULTS = {
@@ -33,7 +33,9 @@ const selfTranslateBody = document.getElementById("selfTranslateBody");
 const selfSummary = document.getElementById("selfSummary");
 const saveButton = document.getElementById("save");
 const translatePageButton = document.getElementById("translatePage");
-const restorePageButton = document.getElementById("restorePage");
+const pageDisplayControl = document.getElementById("pageDisplayControl");
+const pageDisplayTrigger = document.getElementById("pageDisplayTrigger");
+const pageDisplayMenu = document.getElementById("pageDisplayMenu");
 const showHistoryButton = document.getElementById("showHistory");
 const showUsageButton = document.getElementById("showUsage");
 const showWordBookButton = document.getElementById("showWordBook");
@@ -51,11 +53,16 @@ const copySelfResultButton = document.getElementById("copySelfResult");
 const historyContent = document.getElementById("historyContent");
 const usageContent = document.getElementById("usageContent");
 const wordBookSearch = document.getElementById("wordBookSearch");
+const wordBookSortControl = document.getElementById("wordBookSortControl");
+const wordBookSortTrigger = document.getElementById("wordBookSortTrigger");
+const wordBookSortMenu = document.getElementById("wordBookSortMenu");
 const wordBookContent = document.getElementById("wordBookContent");
 const wordStudyDialog = document.getElementById("wordStudyDialog");
 let currentHistory = [];
 let currentWordBook = [];
 let wordStudyPinned = false;
+let wordBookSort = "saved-desc";
+let pageTranslationState = { translated: false, bilingual: false };
 
 document.addEventListener("DOMContentLoaded", init);
 assistantModeToggle.addEventListener("click", toggleAssistantMode);
@@ -63,7 +70,15 @@ toggleSettingsButton.addEventListener("click", toggleSettings);
 toggleSelfTranslateButton.addEventListener("click", toggleSelfTranslate);
 saveButton.addEventListener("click", saveSettings);
 translatePageButton.addEventListener("click", translatePage);
-restorePageButton.addEventListener("click", restorePage);
+pageDisplayTrigger.addEventListener("click", () => {
+  pageDisplayMenu.hidden = !pageDisplayMenu.hidden;
+  pageDisplayTrigger.setAttribute("aria-expanded", String(!pageDisplayMenu.hidden));
+});
+pageDisplayMenu.addEventListener("click", (event) => {
+  const option = event.target.closest("[data-page-display]");
+  if (!option) return;
+  setPageDisplayMode(option.dataset.pageDisplay);
+});
 showHistoryButton.addEventListener("click", showHistory);
 showUsageButton.addEventListener("click", showUsage);
 showWordBookButton.addEventListener("click", showWordBook);
@@ -72,6 +87,34 @@ historyFilter.addEventListener("change", () => renderHistory(currentHistory));
 historySearch.addEventListener("input", () => renderHistory(currentHistory));
 clearUsageButton.addEventListener("click", clearUsage);
 wordBookSearch.addEventListener("input", renderWordBook);
+wordBookSortTrigger.addEventListener("click", () => {
+  wordBookSortMenu.hidden = !wordBookSortMenu.hidden;
+  wordBookSortTrigger.setAttribute("aria-expanded", String(!wordBookSortMenu.hidden));
+});
+wordBookSortMenu.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-sort-kind]");
+  if (!button) return;
+  const kind = button.dataset.sortKind;
+  const [currentKind, currentDirection] = wordBookSort.split("-");
+  wordBookSort = currentKind === kind
+    ? `${kind}-${currentDirection === "asc" ? "desc" : "asc"}`
+    : `${kind}-${kind === "saved" ? "desc" : "asc"}`;
+  wordBookSortMenu.hidden = true;
+  wordBookSortTrigger.setAttribute("aria-expanded", "false");
+  updateWordBookSortUi();
+  renderWordBook();
+});
+document.addEventListener("pointerdown", (event) => {
+  if (!wordBookSortControl.contains(event.target)) {
+    wordBookSortMenu.hidden = true;
+    wordBookSortTrigger.setAttribute("aria-expanded", "false");
+  }
+});
+document.addEventListener("pointerdown", (event) => {
+  if (!pageDisplayControl.contains(event.target)) {
+    closePageDisplayMenu();
+  }
+});
 swapLanguagesButton.addEventListener("click", swapLanguages);
 selfTranslateButton.addEventListener("click", translateSelfText);
 copySelfResultButton.addEventListener("click", copySelfResult);
@@ -114,6 +157,7 @@ async function init() {
   syncSettingsSummary();
   syncAssistantModeButton();
   setSettingsExpanded(!hasCompleteSettings());
+  refreshPageTranslationState();
 }
 
 async function toggleAssistantMode() {
@@ -180,6 +224,11 @@ async function saveSettings() {
 }
 
 async function translatePage() {
+  if (pageTranslationState.translated) {
+    await restorePage();
+    return;
+  }
+
   await persistSettings(readSettings());
   setBusy(translatePageButton, true, "翻译中");
 
@@ -189,10 +238,13 @@ async function translatePage() {
     const response = await chrome.tabs.sendMessage(tab.id, { type: "page-translate-v2" });
     if (!response?.ok) throw new Error(response?.error || "整页翻译失败");
     showStatus(response.count > 0 ? `已翻译 ${response.count} 段` : "暂时没有找到新的可翻译正文");
+    await refreshPageTranslationState(tab);
   } catch (error) {
     showStatus(error.message || String(error), true);
   } finally {
-    setBusy(translatePageButton, false, "整页翻译");
+    translatePageButton.disabled = false;
+    translatePageButton.removeAttribute("aria-busy");
+    updatePageTranslationUi(pageTranslationState);
   }
 }
 
@@ -201,14 +253,68 @@ async function persistSettings(settings) {
 }
 
 async function restorePage() {
+  setBusy(translatePageButton, true, "恢复中");
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     await ensureContentScript(tab);
     await chrome.tabs.sendMessage(tab.id, { type: "page-restore-v2" });
     showStatus("已恢复");
+    updatePageTranslationUi({ translated: false, bilingual: false });
+  } catch (error) {
+    showStatus(error.message || String(error), true);
+  } finally {
+    translatePageButton.disabled = false;
+    translatePageButton.removeAttribute("aria-busy");
+    updatePageTranslationUi(pageTranslationState);
+  }
+}
+
+async function setPageDisplayMode(mode) {
+  closePageDisplayMenu();
+  const wantsBilingual = mode === "bilingual";
+  if (wantsBilingual === pageTranslationState.bilingual) return;
+
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    await ensureContentScript(tab);
+    const response = await chrome.tabs.sendMessage(tab.id, { type: "page-display-mode-v2", mode });
+    if (!response?.ok) throw new Error("译文显示设置失败");
+    updatePageTranslationUi(response);
+    showStatus(response.translated
+      ? (response.bilingual ? "已切换为双语显示" : "已切换为仅译文")
+      : (response.bilingual ? "整页翻译将以双语显示" : "整页翻译将仅显示译文"));
   } catch (error) {
     showStatus(error.message || String(error), true);
   }
+}
+
+async function refreshPageTranslationState(tab = null) {
+  try {
+    const targetTab = tab || (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
+    if (!targetTab?.id) return;
+    await ensureContentScript(targetTab);
+    const response = await chrome.tabs.sendMessage(targetTab.id, { type: "page-translation-state-v2" });
+    if (response?.ok) updatePageTranslationUi(response);
+  } catch {
+    updatePageTranslationUi({ translated: false, bilingual: false });
+  }
+}
+
+function updatePageTranslationUi({ translated, bilingual }) {
+  pageTranslationState = { translated: Boolean(translated), bilingual: Boolean(bilingual) };
+  setButtonLabel(
+    translatePageButton,
+    pageTranslationState.translated ? "恢复原文" : "整页翻译",
+    pageTranslationState.translated ? "icon-restore" : "icon-page"
+  );
+  pageDisplayMenu.querySelectorAll("[data-page-display]").forEach((button) => {
+    button.classList.toggle("is-selected", (button.dataset.pageDisplay === "bilingual") === pageTranslationState.bilingual);
+  });
+}
+
+function closePageDisplayMenu() {
+  pageDisplayMenu.hidden = true;
+  pageDisplayTrigger.setAttribute("aria-expanded", "false");
 }
 
 async function translateSelfText() {
@@ -343,6 +449,7 @@ async function showUsage() {
 
 async function showWordBook() {
   showView("wordBook");
+  updateWordBookSortUi();
   wordBookContent.innerHTML = '<div class="empty-state">读取中...</div>';
   try {
     const response = await chrome.runtime.sendMessage({ type: "get-word-book" });
@@ -356,8 +463,8 @@ async function showWordBook() {
 
 function renderWordBook() {
   const keyword = wordBookSearch.value.trim().toLowerCase();
-  const words = currentWordBook.filter((item) => !keyword || [item.word, item.lemma, item.partOfSpeech, ...(item.meanings || [])]
-    .join(" ").toLowerCase().includes(keyword));
+  const words = sortWordBookEntries(currentWordBook.filter((item) => !keyword || [item.word, item.lemma, item.partOfSpeech, ...(item.meanings || [])]
+    .join(" ").toLowerCase().includes(keyword)), wordBookSort);
   if (!words.length) {
     wordBookContent.innerHTML = `<div class="empty-state">${keyword ? "没有找到匹配的单词" : "单词本还是空的"}</div>`;
     return;
@@ -370,6 +477,7 @@ function renderWordBook() {
         <button class="word-book-remove" type="button" data-word-key="${escapeHtml(item.key)}">删除</button>
       </div>
       <div class="word-book-meaning">${escapeHtml((item.meanings || []).join("；") || item.contextMeaning || "暂无释义")}</div>
+      <div class="word-book-footer">收藏于 ${escapeHtml(item.savedAt ? formatTime(item.savedAt) : "未知")}</div>
     </article>
   `).join("");
   wordBookContent.querySelectorAll("[data-word-key]").forEach((button) => {
@@ -393,6 +501,34 @@ function renderWordBook() {
       wordStudyDialog.hidden = false;
       renderWordStudy(entry);
     });
+  });
+}
+
+function updateWordBookSortUi() {
+  const [kind, direction] = wordBookSort.split("-");
+  const labels = {
+    "saved-asc": "排序：收藏时间（旧到新）",
+    "saved-desc": "排序：收藏时间（新到旧）",
+    "alpha-asc": "排序：英文首字母（A-Z）",
+    "alpha-desc": "排序：英文首字母（Z-A）"
+  };
+  const label = labels[wordBookSort] || labels["saved-desc"];
+  wordBookSortTrigger.dataset.tip = label;
+  wordBookSortTrigger.title = label;
+  wordBookSortMenu.querySelectorAll("[data-sort-kind]").forEach((button) => {
+    const selected = button.dataset.sortKind === kind;
+    button.classList.toggle("is-active", selected);
+    const arrow = button.querySelector(".word-book-sort-direction");
+    arrow.textContent = selected ? (direction === "asc" ? "↑" : "↓") : "↕";
+  });
+}
+
+function sortWordBookEntries(words, sort) {
+  return words.slice().sort((a, b) => {
+    if (sort === "saved-asc") return Number(a.savedAt || 0) - Number(b.savedAt || 0);
+    if (sort === "alpha-asc") return String(a.word || a.lemma || "").localeCompare(String(b.word || b.lemma || ""), "en", { sensitivity: "base" });
+    if (sort === "alpha-desc") return String(b.word || b.lemma || "").localeCompare(String(a.word || a.lemma || ""), "en", { sensitivity: "base" });
+    return Number(b.savedAt || 0) - Number(a.savedAt || 0);
   });
 }
 
@@ -691,7 +827,7 @@ function setBusy(button, busy, label) {
   setButtonLabel(button, label);
 }
 
-function setButtonLabel(button, label) {
+function setButtonLabel(button, label, iconClassOverride = "") {
   const iconById = {
     save: "✓",
     translatePage: "☰"
@@ -705,7 +841,8 @@ function setButtonLabel(button, label) {
     button.textContent = label;
     return;
   }
-  button.innerHTML = `<span class="with-icon"><span class="ui-icon ${escapeHtml(iconClassById[button.id] || "")}" aria-hidden="true">${escapeHtml(icon)}</span><span>${escapeHtml(label)}</span></span>`;
+  const iconClass = iconClassOverride || iconClassById[button.id] || "";
+  button.innerHTML = `<span class="with-icon"><span class="ui-icon ${escapeHtml(iconClass)}" aria-hidden="true">${escapeHtml(icon)}</span><span>${escapeHtml(label)}</span></span>`;
 }
 
 function showStatus(message, isError = false) {
@@ -805,8 +942,8 @@ function renderWordStudy(entry) {
   card.className = "word-study-card";
   card.innerHTML = `
     <div class="word-study-head">
-      <div class="word-study-intro"><div class="word-study-language">英语</div><div class="word-study-word">${escapeHtml(entry.word)}</div><div class="word-study-phonetic">${escapeHtml(entry.phonetic || "暂无音标")}</div></div>
-      <div class="word-study-tools"><button type="button" data-pin data-tip="临时置顶" title="临时置顶" aria-label="临时置顶"><span class="word-study-tool-icon icon-pin" aria-hidden="true"></span></button><button type="button" data-favorite class="${entry.favorite ? "is-active" : ""}" title="${entry.favorite ? "移出单词本" : "收藏到单词本"}" aria-label="${entry.favorite ? "移出单词本" : "收藏到单词本"}"><span class="word-study-tool-icon icon-star ${entry.favorite ? "is-filled" : ""}" aria-hidden="true"></span></button><button type="button" data-close title="关闭" aria-label="关闭"><span class="word-study-tool-icon icon-close" aria-hidden="true"></span></button></div>
+      <div class="word-study-intro"><div class="word-study-drag-handle" data-drag-handle title="拖动窗口" aria-label="拖动窗口"><div class="word-study-language">英语</div></div><div class="word-study-word">${escapeHtml(entry.word)}</div><div class="word-study-phonetic">${escapeHtml(entry.phonetic || "暂无音标")}</div></div>
+      <div class="word-study-tools"><button type="button" data-pin data-tip="临时置顶" title="临时置顶" aria-label="临时置顶"><span class="word-study-tool-icon icon-pin" aria-hidden="true"></span></button><button type="button" data-copy data-tip="复制全部" title="复制全部" aria-label="复制全部"><span class="word-study-tool-icon icon-copy" aria-hidden="true"></span></button><button type="button" data-favorite class="${entry.favorite ? "is-active" : ""}" title="${entry.favorite ? "移出单词本" : "收藏到单词本"}" aria-label="${entry.favorite ? "移出单词本" : "收藏到单词本"}"><span class="word-study-tool-icon icon-star ${entry.favorite ? "is-filled" : ""}" aria-hidden="true"></span></button><button type="button" data-close title="关闭" aria-label="关闭"><span class="word-study-tool-icon icon-close" aria-hidden="true"></span></button></div>
     </div>
     ${entry.contextMeaning ? `<div class="word-study-section"><div class="word-study-label">当前语境</div><div class="word-study-context">${escapeHtml(entry.contextMeaning)}</div></div>` : ""}
     <div class="word-study-section"><div class="word-study-label">${escapeHtml(formatWordPartOfSpeech(entry.partOfSpeech))}</div><ol class="word-study-meanings">${(entry.meanings || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>暂无释义</li>"}</ol></div>
@@ -814,8 +951,20 @@ function renderWordStudy(entry) {
     ${entry.example ? `<div class="word-study-section"><div class="word-study-label">示例</div><div class="word-study-example">${escapeHtml(entry.example)}${entry.exampleTranslation ? `<br>${escapeHtml(entry.exampleTranslation)}` : ""}</div></div>` : ""}
   `;
   wordStudyDialog.replaceChildren(card);
-  enableWordStudyDrag(card);
+  enableWordStudyDrag(card, card.querySelector("[data-drag-handle]"));
   card.querySelector("[data-close]").addEventListener("click", closeWordStudy);
+  card.querySelector("[data-copy]").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const copied = await copyText(formatWordDetailsForCopy(entry));
+    button.dataset.tip = copied ? "已复制" : "复制失败";
+    button.title = button.dataset.tip;
+    button.setAttribute("aria-label", button.dataset.tip);
+    window.setTimeout(() => {
+      button.dataset.tip = "复制全部";
+      button.title = "复制全部";
+      button.setAttribute("aria-label", "复制全部");
+    }, 1200);
+  });
   card.querySelector("[data-pin]").addEventListener("click", (event) => {
     wordStudyPinned = !wordStudyPinned;
     event.currentTarget.classList.toggle("is-active", wordStudyPinned);
@@ -849,16 +998,14 @@ function renderWordStudy(entry) {
   });
 }
 
-function enableWordStudyDrag(card) {
-  const head = card.querySelector(".word-study-head");
-  if (!head) return;
+function enableWordStudyDrag(card, dragHandle) {
+  if (!dragHandle) return;
   let dragging = false;
   let startLeft = 0;
   let startTop = 0;
   let pointerX = 0;
   let pointerY = 0;
-  head.addEventListener("pointerdown", (event) => {
-    if (event.target.closest("button")) return;
+  dragHandle.addEventListener("pointerdown", (event) => {
     event.preventDefault();
     const rect = card.getBoundingClientRect();
     dragging = true;
@@ -870,9 +1017,9 @@ function enableWordStudyDrag(card) {
     card.style.left = `${rect.left}px`;
     card.style.top = `${rect.top}px`;
     card.style.transform = "none";
-    head.setPointerCapture(event.pointerId);
+    dragHandle.setPointerCapture(event.pointerId);
   });
-  head.addEventListener("pointermove", (event) => {
+  dragHandle.addEventListener("pointermove", (event) => {
     if (!dragging) return;
     event.preventDefault();
     const width = card.offsetWidth;
@@ -888,8 +1035,37 @@ function enableWordStudyDrag(card) {
     dragging = false;
     card.classList.remove("is-dragging");
   };
-  head.addEventListener("pointerup", finishDrag);
-  head.addEventListener("lostpointercapture", finishDrag);
+  dragHandle.addEventListener("pointerup", finishDrag);
+  dragHandle.addEventListener("lostpointercapture", finishDrag);
+}
+
+function formatWordDetailsForCopy(entry) {
+  const meanings = (entry.meanings || []).map((item) => `- ${item}`).join("\n");
+  return [
+    entry.word,
+    entry.phonetic ? `音标：${entry.phonetic}` : "",
+    entry.contextMeaning ? `当前语境：${entry.contextMeaning}` : "",
+    `${formatWordPartOfSpeech(entry.partOfSpeech)}：\n${meanings || "暂无释义"}`,
+    entry.forms?.length ? `词形：${entry.forms.join(" · ")}` : "",
+    entry.example ? `示例：${entry.example}${entry.exampleTranslation ? `\n${entry.exampleTranslation}` : ""}` : ""
+  ].filter(Boolean).join("\n\n");
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    document.body.append(textarea);
+    textarea.select();
+    const copied = document.execCommand("copy");
+    textarea.remove();
+    return copied;
+  }
 }
 
 function closeWordStudy() {

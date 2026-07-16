@@ -1,5 +1,5 @@
 (() => {
-const CONTENT_VERSION = "1.0.34";
+const CONTENT_VERSION = "1.0.35";
 if (window.__MODEL_TRANSLATOR_CONTENT_VERSION__ === CONTENT_VERSION) {
   return;
 }
@@ -47,7 +47,7 @@ const SELF_SOURCE_LANGUAGES = [
 ];
 const PAGE_LIMIT = 140;
 const PAGE_BATCH_SIZE = 24;
-const PAGE_BATCH_CONCURRENCY = 3;
+const PAGE_BATCH_CONCURRENCY = 4;
 const PAGE_CACHE_TTL_MS = 10 * 60 * 1000;
 const PAGE_PERSISTENT_CACHE_KEY = "pageTranslationPersistentCacheV2";
 const PAGE_PERSISTENT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -57,6 +57,7 @@ let currentSelection = "";
 let currentRange = null;
 let translatedNodes = [];
 let translatedNodeSet = new WeakSet();
+let pageTranslationDisplayMode = "translated";
 let pageTranslationRunning = false;
 let pageTranslationEnabled = false;
 let pageTranslationQueued = false;
@@ -137,6 +138,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "page-restore-v2") {
     restorePageText();
     sendResponse({ ok: true });
+    return;
+  }
+
+  if (message?.type === "page-bilingual-toggle-v2") {
+    const state = togglePageBilingualDisplay();
+    sendResponse({ ok: true, ...state });
+    return;
+  }
+
+  if (message?.type === "page-display-mode-v2") {
+    const state = setPageBilingualDisplay(message.mode === "bilingual");
+    sendResponse({ ok: true, ...state });
+    return;
+  }
+
+  if (message?.type === "page-translation-state-v2") {
+    sendResponse({ ok: true, translated: translatedNodes.length > 0, bilingual: pageTranslationDisplayMode === "bilingual" });
   }
 });
 
@@ -391,8 +409,8 @@ function renderWordPopover(popover, entry) {
   const head = document.createElement("div");
   head.className = "model-translator-word-head";
   head.innerHTML = `
-    <div class="model-translator-word-intro"><div class="model-translator-word-language">英语</div><div class="model-translator-word-title">${escapeHtml(entry.word)}</div><div class="model-translator-word-meta">${escapeHtml(entry.phonetic || "暂无音标")}</div></div>
-    <div class="model-translator-word-tools"><button type="button" data-word-pin data-tip="临时置顶" title="临时置顶" aria-label="临时置顶"><span class="model-translator-word-tool-icon icon-pin" aria-hidden="true"></span></button><button type="button" data-word-favorite class="${entry.favorite ? "is-active" : ""}" title="${entry.favorite ? "移出单词本" : "收藏到单词本"}" aria-label="${entry.favorite ? "移出单词本" : "收藏到单词本"}"><span class="model-translator-word-tool-icon icon-star ${entry.favorite ? "is-filled" : ""}" aria-hidden="true"></span></button><button type="button" data-word-close title="关闭" aria-label="关闭"><span class="model-translator-word-tool-icon icon-close" aria-hidden="true"></span></button></div>
+    <div class="model-translator-word-intro"><div class="model-translator-word-drag-handle" data-word-drag-handle title="拖动窗口" aria-label="拖动窗口"><div class="model-translator-word-language">英语</div></div><div class="model-translator-word-title">${escapeHtml(entry.word)}</div><div class="model-translator-word-meta">${escapeHtml(entry.phonetic || "暂无音标")}</div></div>
+    <div class="model-translator-word-tools"><button type="button" data-word-pin data-tip="临时置顶" title="临时置顶" aria-label="临时置顶"><span class="model-translator-word-tool-icon icon-pin" aria-hidden="true"></span></button><button type="button" data-word-copy data-tip="复制全部" title="复制全部" aria-label="复制全部"><span class="model-translator-word-tool-icon icon-copy" aria-hidden="true"></span></button><button type="button" data-word-favorite class="${entry.favorite ? "is-active" : ""}" title="${entry.favorite ? "移出单词本" : "收藏到单词本"}" aria-label="${entry.favorite ? "移出单词本" : "收藏到单词本"}"><span class="model-translator-word-tool-icon icon-star ${entry.favorite ? "is-filled" : ""}" aria-hidden="true"></span></button><button type="button" data-word-close title="关闭" aria-label="关闭"><span class="model-translator-word-tool-icon icon-close" aria-hidden="true"></span></button></div>
   `;
   const sections = document.createElement("div");
   sections.className = "model-translator-word-sections";
@@ -401,8 +419,20 @@ function renderWordPopover(popover, entry) {
   if (entry.forms?.length) sections.append(createWordSection("词形", entry.forms.join(" · ")));
   if (entry.example) sections.append(createWordSection("示例", `${entry.example}${entry.exampleTranslation ? `\n${entry.exampleTranslation}` : ""}`, true));
   popover.append(head, sections);
-  enableWordPopoverDrag(popover, head);
+  enableWordPopoverDrag(popover, head.querySelector("[data-word-drag-handle]"));
   popover.querySelector("[data-word-close]").addEventListener("click", removeWordPopover);
+  popover.querySelector("[data-word-copy]").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const copied = await copyText(formatWordDetailsForCopy(entry));
+    button.dataset.tip = copied ? "已复制" : "复制失败";
+    button.title = button.dataset.tip;
+    button.setAttribute("aria-label", button.dataset.tip);
+    window.setTimeout(() => {
+      button.dataset.tip = "复制全部";
+      button.title = "复制全部";
+      button.setAttribute("aria-label", "复制全部");
+    }, 1200);
+  });
   popover.querySelector("[data-word-pin]").addEventListener("click", (event) => {
     const pinned = popover.dataset.pinned === "true";
     popover.dataset.pinned = String(!pinned);
@@ -439,6 +469,18 @@ function renderWordPopover(popover, entry) {
   });
 }
 
+function formatWordDetailsForCopy(entry) {
+  const meanings = (entry.meanings || []).map((item) => `- ${item}`).join("\n");
+  return [
+    entry.word,
+    entry.phonetic ? `音标：${entry.phonetic}` : "",
+    entry.contextMeaning ? `当前语境：${entry.contextMeaning}` : "",
+    `${formatWordPartOfSpeech(entry.partOfSpeech)}：\n${meanings || "暂无释义"}`,
+    entry.forms?.length ? `词形：${entry.forms.join(" · ")}` : "",
+    entry.example ? `示例：${entry.example}${entry.exampleTranslation ? `\n${entry.exampleTranslation}` : ""}` : ""
+  ].filter(Boolean).join("\n\n");
+}
+
 function createWordSection(label, value, example = false, variant = "") {
   const section = document.createElement("section");
   section.className = `model-translator-word-section ${variant}`.trim();
@@ -468,14 +510,14 @@ function positionWordPopover(popover, rect) {
   popover.style.left = `${left}px`;
 }
 
-function enableWordPopoverDrag(popover, head) {
+function enableWordPopoverDrag(popover, dragHandle) {
+  if (!dragHandle) return;
   let dragging = false;
   let startLeft = 0;
   let startTop = 0;
   let pointerX = 0;
   let pointerY = 0;
-  head.addEventListener("pointerdown", (event) => {
-    if (event.target.closest("button")) return;
+  dragHandle.addEventListener("pointerdown", (event) => {
     event.preventDefault();
     event.stopPropagation();
     const rect = popover.getBoundingClientRect();
@@ -484,10 +526,10 @@ function enableWordPopoverDrag(popover, head) {
     startTop = rect.top;
     pointerX = event.clientX;
     pointerY = event.clientY;
-    head.classList.add("is-dragging");
-    head.setPointerCapture(event.pointerId);
+    dragHandle.classList.add("is-dragging");
+    dragHandle.setPointerCapture(event.pointerId);
   });
-  head.addEventListener("pointermove", (event) => {
+  dragHandle.addEventListener("pointermove", (event) => {
     if (!dragging) return;
     event.preventDefault();
     const width = popover.offsetWidth;
@@ -502,10 +544,10 @@ function enableWordPopoverDrag(popover, head) {
   });
   const finishDrag = () => {
     dragging = false;
-    head.classList.remove("is-dragging");
+    dragHandle.classList.remove("is-dragging");
   };
-  head.addEventListener("pointerup", finishDrag);
-  head.addEventListener("lostpointercapture", finishDrag);
+  dragHandle.addEventListener("pointerup", finishDrag);
+  dragHandle.addEventListener("lostpointercapture", finishDrag);
 }
 
 function removeWordPopover() {
@@ -671,9 +713,69 @@ async function translatePageChunk(chunk, baseIndex, cacheMeta, cancelToken) {
 
 function applyNodeTranslation(node, original, translation) {
   if (translatedNodeSet.has(node)) return;
-  translatedNodes.push({ node, original });
+  const entry = { node, original, translation: preserveOuterWhitespace(original, translation), wrapper: null, compactTarget: null, originalTitle: null };
+  translatedNodes.push(entry);
   translatedNodeSet.add(node);
-  node.nodeValue = preserveOuterWhitespace(original, translation);
+  renderPageTranslationEntry(entry);
+}
+
+function togglePageBilingualDisplay() {
+  return setPageBilingualDisplay(pageTranslationDisplayMode !== "bilingual");
+}
+
+function setPageBilingualDisplay(enabled) {
+  pageTranslationDisplayMode = enabled ? "bilingual" : "translated";
+  if (translatedNodes.length) translatedNodes.forEach(renderPageTranslationEntry);
+  updateFloatingPageButton(document.getElementById(FLOATING_HOST_ID)?.shadowRoot?.querySelector(".floating-menu"), { translated: translatedNodes.length > 0 });
+  return { translated: translatedNodes.length > 0, bilingual: pageTranslationDisplayMode === "bilingual" };
+}
+
+function renderPageTranslationEntry(entry) {
+  if (pageTranslationDisplayMode !== "bilingual") {
+    if (entry.wrapper?.isConnected) entry.wrapper.replaceWith(entry.node);
+    entry.wrapper = null;
+    if (entry.compactTarget) {
+      entry.compactTarget.title = entry.originalTitle || "";
+      entry.compactTarget = null;
+      entry.originalTitle = null;
+    }
+    entry.node.nodeValue = entry.translation;
+    return;
+  }
+
+  const parent = entry.node.parentElement;
+  const compactTarget = parent?.closest("button, a, summary, [role='button'], [role='link'], [role='menuitem'], nav, header");
+  if (compactTarget) {
+    entry.node.nodeValue = entry.translation;
+    if (!entry.compactTarget) {
+      entry.compactTarget = compactTarget;
+      entry.originalTitle = compactTarget.getAttribute("title") || "";
+    }
+    compactTarget.title = entry.original.trim();
+    return;
+  }
+
+  if (entry.wrapper?.isConnected) return;
+  const wrapper = document.createElement("span");
+  wrapper.className = "model-translator-bilingual-segment";
+  wrapper.dataset.modelTranslatorBilingual = "true";
+  if (shouldStackBilingualNode(entry.node)) wrapper.classList.add("is-stacked");
+  const translation = document.createElement("span");
+  translation.className = "model-translator-bilingual-translation";
+  translation.textContent = entry.translation;
+  const original = document.createElement("span");
+  original.className = "model-translator-bilingual-original";
+  original.textContent = entry.original.trim();
+  wrapper.append(translation, original);
+  entry.node.replaceWith(wrapper);
+  entry.wrapper = wrapper;
+}
+
+function shouldStackBilingualNode(node) {
+  const parent = node.parentElement;
+  if (!parent) return false;
+  const meaningfulChildren = Array.from(parent.childNodes).filter((child) => child.nodeType !== Node.TEXT_NODE || child.nodeValue.trim());
+  return meaningfulChildren.length === 1 && /^(P|DIV|LI|H[1-6]|BLOCKQUOTE|TD|TH|DT|DD)$/i.test(parent.tagName);
 }
 
 function restorePageText() {
@@ -691,11 +793,14 @@ function restorePageText() {
     }).catch(() => {});
   }
   pageTranslationRequestId = "";
-  translatedNodes.reverse().forEach(({ node, original }) => {
-    if (node?.isConnected) node.nodeValue = original;
+  translatedNodes.reverse().forEach((entry) => {
+    if (entry.wrapper?.isConnected) entry.wrapper.replaceWith(entry.node);
+    if (entry.compactTarget) entry.compactTarget.title = entry.originalTitle || "";
+    if (entry.node?.isConnected) entry.node.nodeValue = entry.original;
   });
   translatedNodes = [];
   translatedNodeSet = new WeakSet();
+  pageTranslationDisplayMode = "translated";
 }
 
 function createPageTranslationRequestId() {
@@ -883,6 +988,7 @@ function collectTextNodes() {
           return NodeFilter.FILTER_REJECT;
         }
         if (translatedNodeSet.has(node)) return NodeFilter.FILTER_REJECT;
+        if (parent.closest("[data-model-translator-bilingual]")) return NodeFilter.FILTER_REJECT;
         if (parent.closest(`#${BUTTON_ID}, #${POPOVER_ID}, #${WORD_POPOVER_ID}, #${FLOATING_HOST_ID}`)) return NodeFilter.FILTER_REJECT;
         if (parent.isContentEditable) return NodeFilter.FILTER_REJECT;
         if (!isElementVisible(parent)) return NodeFilter.FILTER_REJECT;
@@ -1060,7 +1166,14 @@ function initFloatingLauncher() {
       </button>
       <button class="floating-dismiss-trigger" type="button" title="让小译先退开" aria-label="让小译先退开">×</button>
       <nav class="floating-menu" aria-label="小译快捷功能">
-        <button class="tool-button tool-button-primary-page" type="button" data-action="page" data-tip="整页翻译"><span class="ui-icon icon-page" aria-hidden="true"></span></button>
+        <div class="tool-button-page-wrap">
+          <button class="tool-button tool-button-primary-page" type="button" data-action="page" data-tip="整页翻译"><span class="ui-icon icon-page" aria-hidden="true"></span></button>
+          <button class="page-display-dot" type="button" data-action="display" data-tip="显示格式" title="显示格式" aria-label="显示格式" aria-expanded="false"></button>
+          <div class="floating-page-display-menu" hidden>
+            <button type="button" data-page-display="translated">仅译文</button>
+            <button type="button" data-page-display="bilingual">双语显示</button>
+          </div>
+        </div>
         <button class="tool-button tool-button-primary-self" type="button" data-action="self" data-tip="自助翻译"><span class="ui-icon icon-spark" aria-hidden="true"></span></button>
         <button class="tool-button" type="button" data-action="history" data-tip="历史记录"><span class="ui-icon icon-history" aria-hidden="true"></span></button>
         <button class="tool-button" type="button" data-action="wordbook" data-tip="单词本"><span class="ui-icon icon-book" aria-hidden="true"></span></button>
@@ -1244,7 +1357,7 @@ function initFloatingLauncher() {
       gap: 6px;
       padding: 8px 6px;
       border: 1px solid rgba(226, 232, 240, 0.95);
-      border-radius: 999px;
+      border-radius: 10px;
       background: rgba(255, 255, 255, 0.74);
       box-shadow: 0 8px 22px rgba(15, 23, 42, 0.1);
       opacity: 0;
@@ -1298,6 +1411,130 @@ function initFloatingLauncher() {
       transition: transform 140ms ease, background 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
     }
 
+    .tool-button-page-wrap {
+      position: relative;
+      flex: 0 0 28px;
+      width: 28px;
+      height: 28px;
+    }
+
+    .tool-button-page-wrap .tool-button {
+      width: 100%;
+      height: 100%;
+    }
+
+    .page-display-dot {
+      position: absolute;
+      z-index: 3;
+      top: -3px;
+      right: -3px;
+      width: 11px;
+      height: 11px;
+      padding: 0;
+      border: 2px solid rgba(255, 255, 255, 0.95);
+      border-radius: 999px;
+      background: #409eff;
+      box-shadow: 0 1px 4px rgba(37, 99, 235, 0.32);
+      cursor: pointer;
+      transition: transform 140ms ease, background 140ms ease, box-shadow 140ms ease;
+    }
+
+    .page-display-dot.is-bilingual {
+      background: #67c23a;
+      box-shadow: 0 1px 4px rgba(103, 194, 58, 0.32);
+    }
+
+    .page-display-dot:hover,
+    .page-display-dot[aria-expanded="true"] {
+      box-shadow: 0 2px 6px rgba(37, 99, 235, 0.4);
+    }
+
+    .page-display-dot.is-bilingual:hover,
+    .page-display-dot.is-bilingual[aria-expanded="true"] {
+      box-shadow: 0 2px 6px rgba(103, 194, 58, 0.42);
+    }
+
+    .page-display-dot::after {
+      content: attr(data-tip);
+      position: absolute;
+      top: 50%;
+      right: 42px;
+      width: max-content;
+      max-width: 120px;
+      padding: 5px 8px;
+      border-radius: 8px;
+      background: rgba(15, 23, 42, 0.88);
+      color: #ffffff;
+      font-size: 11px;
+      font-weight: 600;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(-50%) translateX(4px);
+      transition: opacity 120ms ease, transform 120ms ease;
+      white-space: nowrap;
+    }
+
+    .page-display-dot:hover::after {
+      opacity: 1;
+      transform: translateY(-50%) translateX(0);
+    }
+
+    .floating-wrapper.is-left-side .page-display-dot::after {
+      right: auto;
+      left: 42px;
+      transform: translateY(-50%) translateX(-4px);
+    }
+
+    .floating-wrapper.is-left-side .page-display-dot:hover::after {
+      transform: translateY(-50%) translateX(0);
+    }
+
+    .floating-page-display-menu {
+      position: absolute;
+      z-index: 5;
+      top: 0;
+      right: 35px;
+      bottom: auto;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      width: 112px;
+      gap: 2px;
+      padding: 3px;
+      border: 1px solid rgba(214, 229, 245, 0.95);
+      border-radius: 7px;
+      background: rgba(255, 255, 255, 0.88);
+      box-shadow: 0 7px 16px rgba(15, 23, 42, 0.14);
+    }
+
+    .floating-page-display-menu[hidden] {
+      display: none;
+    }
+
+    .floating-page-display-menu button {
+      min-height: 22px;
+      padding: 0 5px;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: #64748b;
+      cursor: pointer;
+      font: 600 10px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      text-align: center;
+      transition: background 120ms ease, color 120ms ease;
+      white-space: nowrap;
+    }
+
+    .floating-page-display-menu button:hover,
+    .floating-page-display-menu button.is-selected {
+      background: #ecf5ff;
+      color: #2563eb;
+    }
+
+    .floating-wrapper.is-left-side .floating-page-display-menu {
+      right: auto;
+      left: 35px;
+    }
+
     .ui-icon {
       display: inline-flex;
       width: 13px;
@@ -1317,13 +1554,18 @@ function initFloatingLauncher() {
     }
 
     .icon-spark {
-      mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='m12 2 1.9 6.1L20 10l-6.1 1.9L12 18l-1.9-6.1L4 10l6.1-1.9L12 2Zm6 12 1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3Z'/%3E%3C/svg%3E");
-      -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='m12 2 1.9 6.1L20 10l-6.1 1.9L12 18l-1.9-6.1L4 10l6.1-1.9L12 2Zm6 12 1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3Z'/%3E%3C/svg%3E");
+      mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='m12 2 2.5 7.5L22 12l-7.5 2.5L12 22l-2.5-7.5L2 12l7.5-2.5L12 2Z'/%3E%3C/svg%3E");
+      -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='m12 2 2.5 7.5L22 12l-7.5 2.5L12 22l-2.5-7.5L2 12l7.5-2.5L12 2Z'/%3E%3C/svg%3E");
     }
 
     .icon-page {
       mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' d='M6 7h12M6 12h12M6 17h8'/%3E%3C/svg%3E");
       -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' d='M6 7h12M6 12h12M6 17h8'/%3E%3C/svg%3E");
+    }
+
+    .icon-bilingual {
+      mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' d='M4 5h7m-3.5 0c0 6-2.2 10-4.5 12m2-5h5m4-7h6m-3 0v14m-3-4h6'/%3E%3C/svg%3E");
+      -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' d='M4 5h7m-3.5 0c0 6-2.2 10-4.5 12m2-5h5m4-7h6m-3 0v14m-3-4h6'/%3E%3C/svg%3E");
     }
 
     .icon-restore {
@@ -1344,6 +1586,38 @@ function initFloatingLauncher() {
     .icon-token {
       mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M4 5h7v7H4V5Zm9 0h7v7h-7V5ZM4 14h7v5H4v-5Zm9 0h7v5h-7v-5Z'/%3E%3C/svg%3E");
       -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M4 5h7v7H4V5Zm9 0h7v7h-7V5ZM4 14h7v5H4v-5Zm9 0h7v5h-7v-5Z'/%3E%3C/svg%3E");
+    }
+
+    .ui-icon.icon-gear {
+      mask-size: 12.5px 12.5px;
+      -webkit-mask-size: 12.5px 12.5px;
+    }
+
+    .ui-icon.icon-spark {
+      mask-size: 12px 12px;
+      -webkit-mask-size: 12px 12px;
+    }
+
+    .ui-icon.icon-page {
+      mask-size: 16.5px 16.5px;
+      -webkit-mask-size: 16.5px 16.5px;
+    }
+
+    .ui-icon.icon-restore,
+    .ui-icon.icon-bilingual {
+      mask-size: 12px 12px;
+      -webkit-mask-size: 12px 12px;
+    }
+
+    .ui-icon.icon-history,
+    .ui-icon.icon-book {
+      mask-size: 11.5px 11.5px;
+      -webkit-mask-size: 11.5px 11.5px;
+    }
+
+    .ui-icon.icon-token {
+      mask-size: 15.5px 15.5px;
+      -webkit-mask-size: 15.5px 15.5px;
     }
 
     .tool-button:hover {
@@ -2158,6 +2432,137 @@ function initFloatingLauncher() {
       gap: 7px;
     }
 
+    .floating-word-book-toolbar .history-search {
+      flex: 1 1 auto;
+      max-width: none;
+    }
+
+    .floating-word-book-sort-control {
+      position: relative;
+      flex: 0 0 auto;
+    }
+
+    .floating-word-book-sort-trigger,
+    .floating-word-book-sort-menu button {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid #dbe3ee;
+      background: #fff;
+      color: #64748b;
+      cursor: pointer;
+      transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, color 140ms ease;
+    }
+
+    .floating-word-book-sort-trigger {
+      width: 26px;
+      height: 26px;
+      border-radius: 8px;
+    }
+
+    .floating-word-book-sort-trigger:hover,
+    .floating-word-book-sort-trigger[aria-expanded="true"] {
+      border-color: #b3d8ff;
+      background: #ecf5ff;
+      color: #409eff;
+      transform: translateY(-1px);
+    }
+
+    .floating-word-book-filter-icon,
+    .floating-word-book-clock-icon {
+      display: inline-block;
+      width: 13px;
+      height: 13px;
+      background: currentColor;
+      mask-position: center;
+      mask-repeat: no-repeat;
+      mask-size: 13px 13px;
+      -webkit-mask-position: center;
+      -webkit-mask-repeat: no-repeat;
+      -webkit-mask-size: 13px 13px;
+    }
+
+    .floating-word-book-filter-icon {
+      mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='M4 6h16l-6.2 7v4.7l-3.6 1.8V13L4 6Z'/%3E%3C/svg%3E");
+      -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='M4 6h16l-6.2 7v4.7l-3.6 1.8V13L4 6Z'/%3E%3C/svg%3E");
+    }
+
+    .floating-word-book-clock-icon {
+      mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='12' cy='12' r='8' fill='none' stroke='black' stroke-width='2.2'/%3E%3Cpath d='M12 7v5l3.2 2' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+      -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='12' cy='12' r='8' fill='none' stroke='black' stroke-width='2.2'/%3E%3Cpath d='M12 7v5l3.2 2' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    }
+
+    .floating-word-book-sort-menu {
+      position: absolute;
+      z-index: 5;
+      top: calc(100% + 5px);
+      right: 0;
+      display: grid;
+      gap: 4px;
+      width: 32px;
+      padding: 4px;
+      border: 1px solid #dbe3ee;
+      border-radius: 9px;
+      background: rgba(255, 255, 255, 0.96);
+      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.14);
+    }
+
+    .floating-word-book-sort-menu[hidden] {
+      display: none;
+    }
+
+    .floating-word-book-sort-menu button {
+      width: 32px;
+      height: 26px;
+      gap: 2px;
+      border-color: transparent;
+      border-radius: 6px;
+      font-size: 10px;
+    }
+
+    .floating-word-book-sort-menu button:hover,
+    .floating-word-book-sort-menu button.is-active {
+      background: #ecf5ff;
+      color: #409eff;
+    }
+
+    .floating-word-book-alpha-icon {
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .floating-word-book-sort-direction {
+      font-size: 10px;
+      line-height: 1;
+    }
+
+    .floating-word-book-sort-trigger[data-tip]::after,
+    .floating-word-book-sort-menu button[data-tip]::after {
+      content: attr(data-tip);
+      position: absolute;
+      z-index: 7;
+      top: calc(100% + 6px);
+      right: 0;
+      padding: 5px 7px;
+      border-radius: 7px;
+      background: rgba(15, 23, 42, 0.9);
+      color: #fff;
+      font-size: 10px;
+      line-height: 1.2;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(-3px);
+      transition: opacity 120ms ease, transform 120ms ease;
+      white-space: nowrap;
+    }
+
+    .floating-word-book-sort-trigger[data-tip]:hover::after,
+    .floating-word-book-sort-menu button[data-tip]:hover::after {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
     .floating-word-book-item {
       display: grid;
       gap: 5px;
@@ -2201,6 +2606,12 @@ function initFloatingLauncher() {
       color: #475569;
       font-size: 11px;
       line-height: 1.45;
+    }
+
+    .floating-word-book-footer {
+      color: #94a3b8;
+      font-size: 10px;
+      text-align: right;
     }
 
     .floating-word-book-remove {
@@ -2354,7 +2765,8 @@ function initFloatingLauncher() {
     panelOpacity: 100,
     panelOpacityDragging: false,
     panelPinned: false,
-    activeAction: ""
+    activeAction: "",
+    pageDisplayMenuOpen: false
   };
 
   const supportsOpacityControls = (action) => action === "self" || action === "history";
@@ -2593,11 +3005,25 @@ function initFloatingLauncher() {
   });
 
   menu.addEventListener("click", async (event) => {
+    const displayOption = event.target.closest("[data-page-display]");
+    if (displayOption) {
+      const bilingual = displayOption.dataset.pageDisplay === "bilingual";
+      setPageBilingualDisplay(bilingual);
+      state.pageDisplayMenuOpen = false;
+      setFloatingStatus(status, bilingual ? "已切换为双语显示" : "已切换为仅译文");
+      updateFloatingPageButton(menu, state);
+      return;
+    }
     const actionButton = event.target.closest("[data-action]");
     if (!actionButton) return;
     dismissMenu.hidden = true;
     dismissTrigger.classList.remove("is-open");
     const action = actionButton.dataset.action;
+    if (action === "display") {
+      state.pageDisplayMenuOpen = !state.pageDisplayMenuOpen;
+      updateFloatingPageButton(menu, state);
+      return;
+    }
     if (action === "page") {
       await runFloatingPageAction(actionButton, menu, state, status);
       return;
@@ -2726,10 +3152,25 @@ async function runFloatingPageAction(button, menu, state, status) {
 }
 
 function updateFloatingPageButton(menu, state) {
+  if (!menu) return;
   const button = menu.querySelector('[data-action="page"]');
+  const displayDot = menu.querySelector('[data-action="display"]');
+  const displayMenu = menu.querySelector(".floating-page-display-menu");
   if (!button) return;
-  if (button.classList.contains("is-busy")) return;
   const translated = state.translated || translatedNodes.length > 0;
+  if (displayDot && displayMenu) {
+    const bilingual = pageTranslationDisplayMode === "bilingual";
+    displayDot.classList.toggle("is-bilingual", bilingual);
+    displayDot.dataset.tip = "显示格式";
+    displayDot.title = displayDot.dataset.tip;
+    displayDot.setAttribute("aria-label", displayDot.dataset.tip);
+    displayDot.setAttribute("aria-expanded", String(Boolean(state.pageDisplayMenuOpen)));
+    displayMenu.hidden = !state.pageDisplayMenuOpen;
+    displayMenu.querySelectorAll("[data-page-display]").forEach((option) => {
+      option.classList.toggle("is-selected", (option.dataset.pageDisplay === "bilingual") === bilingual);
+    });
+  }
+  if (button.classList.contains("is-busy")) return;
   button.innerHTML = `<span class="ui-icon ${translated ? "icon-restore" : "icon-page"}" aria-hidden="true"></span>`;
   button.dataset.tip = translated ? "恢复原文" : "整页翻译";
 }
@@ -2753,17 +3194,21 @@ function renderFloatingPanel(action, refs) {
 
 async function renderFloatingWordBook({ title, status, body }) {
   title.textContent = "单词本";
-  body.innerHTML = '<div class="toolbar"><input id="floatingWordBookSearch" class="history-search" type="search" placeholder="搜索单词" autocomplete="off" /></div><div id="floatingWordBookList" class="floating-word-book-list"><div class="empty">读取中...</div></div>';
+  body.innerHTML = '<div class="toolbar floating-word-book-toolbar"><input id="floatingWordBookSearch" class="history-search" type="search" placeholder="搜索单词" autocomplete="off" /><div id="floatingWordBookSortControl" class="floating-word-book-sort-control"><button id="floatingWordBookSortTrigger" class="floating-word-book-sort-trigger" type="button" data-tip="排序：收藏时间（新到旧）" title="排序：收藏时间（新到旧）" aria-label="单词排序" aria-expanded="false"><span class="floating-word-book-filter-icon" aria-hidden="true"></span></button><div id="floatingWordBookSortMenu" class="floating-word-book-sort-menu" hidden><button type="button" data-sort-kind="saved" data-tip="按收藏时间"><span class="floating-word-book-clock-icon" aria-hidden="true"></span><span class="floating-word-book-sort-direction" aria-hidden="true"></span></button><button type="button" data-sort-kind="alpha" data-tip="按英文首字母"><span class="floating-word-book-alpha-icon" aria-hidden="true">A-z</span><span class="floating-word-book-sort-direction" aria-hidden="true"></span></button></div></div></div><div id="floatingWordBookList" class="floating-word-book-list"><div class="empty">读取中...</div></div>';
   const search = body.querySelector("#floatingWordBookSearch");
+  const sortControl = body.querySelector("#floatingWordBookSortControl");
+  const sortTrigger = body.querySelector("#floatingWordBookSortTrigger");
+  const sortMenu = body.querySelector("#floatingWordBookSortMenu");
   const list = body.querySelector("#floatingWordBookList");
+  let sortValue = "saved-desc";
   try {
     const response = await chrome.runtime.sendMessage({ type: "get-word-book" });
     if (!response?.ok) throw new Error(response?.error || "读取单词本失败");
     const words = response.words || [];
     const renderList = () => {
       const keyword = search.value.trim().toLowerCase();
-      const filtered = words.filter((item) => !keyword || [item.word, item.lemma, item.partOfSpeech, ...(item.meanings || [])]
-        .join(" ").toLowerCase().includes(keyword));
+      const filtered = sortWordBookEntries(words.filter((item) => !keyword || [item.word, item.lemma, item.partOfSpeech, ...(item.meanings || [])]
+        .join(" ").toLowerCase().includes(keyword)), sortValue);
       if (!filtered.length) {
         list.innerHTML = `<div class="empty">${keyword ? "没有找到匹配的单词" : "单词本还是空的"}</div>`;
         return;
@@ -2776,6 +3221,7 @@ async function renderFloatingWordBook({ title, status, body }) {
             <button class="floating-word-book-remove" type="button" data-remove-word="${escapeHtml(item.key)}">删除</button>
           </div>
           <div class="floating-word-book-meaning">${escapeHtml((item.meanings || []).join("；") || item.contextMeaning || "暂无释义")}</div>
+          <div class="floating-word-book-footer">收藏于 ${escapeHtml(formatDate(item.savedAt) || "未知")}</div>
         </article>
       `).join("");
       list.querySelectorAll("[data-remove-word]").forEach((button) => {
@@ -2809,12 +3255,62 @@ async function renderFloatingWordBook({ title, status, body }) {
         });
       });
     };
+    const updateSortUi = () => {
+      const [kind, direction] = sortValue.split("-");
+      const labels = {
+        "saved-asc": "排序：收藏时间（旧到新）",
+        "saved-desc": "排序：收藏时间（新到旧）",
+        "alpha-asc": "排序：英文首字母（A-Z）",
+        "alpha-desc": "排序：英文首字母（Z-A）"
+      };
+      const label = labels[sortValue] || labels["saved-desc"];
+      sortTrigger.dataset.tip = label;
+      sortTrigger.title = label;
+      sortMenu.querySelectorAll("[data-sort-kind]").forEach((button) => {
+        const selected = button.dataset.sortKind === kind;
+        button.classList.toggle("is-active", selected);
+        button.querySelector(".floating-word-book-sort-direction").textContent = selected ? (direction === "asc" ? "↑" : "↓") : "↕";
+      });
+    };
+    sortTrigger.addEventListener("click", () => {
+      sortMenu.hidden = !sortMenu.hidden;
+      sortTrigger.setAttribute("aria-expanded", String(!sortMenu.hidden));
+    });
+    sortMenu.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-sort-kind]");
+      if (!button) return;
+      const kind = button.dataset.sortKind;
+      const [currentKind, currentDirection] = sortValue.split("-");
+      sortValue = currentKind === kind
+        ? `${kind}-${currentDirection === "asc" ? "desc" : "asc"}`
+        : `${kind}-${kind === "saved" ? "desc" : "asc"}`;
+      sortMenu.hidden = true;
+      sortTrigger.setAttribute("aria-expanded", "false");
+      updateSortUi();
+      renderList();
+    });
+    body.addEventListener("pointerdown", (event) => {
+      if (!sortControl.contains(event.target)) {
+        sortMenu.hidden = true;
+        sortTrigger.setAttribute("aria-expanded", "false");
+      }
+    });
     search.addEventListener("input", renderList);
+    updateSortUi();
     renderList();
   } catch (error) {
     list.innerHTML = `<div class="empty">${escapeHtml(error.message || String(error))}</div>`;
     setFloatingStatus(status, error.message || String(error), true);
   }
+}
+
+function sortWordBookEntries(words, sort) {
+  return words.slice().sort((a, b) => {
+    if (sort === "saved-asc") return Number(a.savedAt || 0) - Number(b.savedAt || 0);
+    if (sort === "alpha-asc") return String(a.word || a.lemma || "").localeCompare(String(b.word || b.lemma || ""), "en", { sensitivity: "base" });
+    if (sort === "alpha-desc") return String(b.word || b.lemma || "").localeCompare(String(a.word || a.lemma || ""), "en", { sensitivity: "base" });
+    return Number(b.savedAt || 0) - Number(a.savedAt || 0);
+  });
 }
 
 async function renderFloatingSettings({ title, status, body }) {
@@ -3247,6 +3743,44 @@ function escapeHtml(value) {
 
 const style = document.createElement("style");
 style.textContent = `
+  .model-translator-bilingual-segment {
+    display: inline;
+  }
+
+  .model-translator-bilingual-translation {
+    color: inherit;
+  }
+
+  .model-translator-bilingual-original {
+    margin-left: 0.35em;
+    color: #94a3b8;
+    font-size: 0.84em;
+    font-style: italic;
+  }
+
+  .model-translator-bilingual-original::before {
+    content: "(";
+  }
+
+  .model-translator-bilingual-original::after {
+    content: ")";
+  }
+
+  .model-translator-bilingual-segment.is-stacked {
+    display: block;
+  }
+
+  .model-translator-bilingual-segment.is-stacked .model-translator-bilingual-translation,
+  .model-translator-bilingual-segment.is-stacked .model-translator-bilingual-original {
+    display: block;
+    margin-left: 0;
+  }
+
+  .model-translator-bilingual-segment.is-stacked .model-translator-bilingual-original::before,
+  .model-translator-bilingual-segment.is-stacked .model-translator-bilingual-original::after {
+    content: none;
+  }
+
   #${BUTTON_ID} {
     position: absolute;
     z-index: 2147483647;
@@ -3489,11 +4023,17 @@ style.textContent = `
     display: flex;
     align-items: flex-start;
     gap: 10px;
+  }
+
+  #${WORD_POPOVER_ID} .model-translator-word-drag-handle {
+    display: block;
+    min-height: 17px;
+    margin-bottom: 1px;
     cursor: grab;
     touch-action: none;
   }
 
-  #${WORD_POPOVER_ID} .model-translator-word-head.is-dragging {
+  #${WORD_POPOVER_ID} .model-translator-word-drag-handle.is-dragging {
     cursor: grabbing;
   }
 
@@ -3590,9 +4130,14 @@ style.textContent = `
   }
 
   #${WORD_POPOVER_ID} .icon-pin { mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M9 3h6v5l3 3v2h-5v8h-2v-8H6v-2l3-3V3Zm2 2v3.8L8.8 11h6.4L13 8.8V5h-2Z'/%3E%3C/svg%3E"); -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M9 3h6v5l3 3v2h-5v8h-2v-8H6v-2l3-3V3Zm2 2v3.8L8.8 11h6.4L13 8.8V5h-2Z'/%3E%3C/svg%3E"); }
+  #${WORD_POPOVER_ID} .icon-copy { mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Crect x='9' y='9' width='10' height='10' rx='1.5' fill='none' stroke='black' stroke-width='2'/%3E%3Cpath d='M15 9V6.5A1.5 1.5 0 0 0 13.5 5h-8A1.5 1.5 0 0 0 4 6.5v8A1.5 1.5 0 0 0 5.5 16H9' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E"); -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Crect x='9' y='9' width='10' height='10' rx='1.5' fill='none' stroke='black' stroke-width='2'/%3E%3Cpath d='M15 9V6.5A1.5 1.5 0 0 0 13.5 5h-8A1.5 1.5 0 0 0 4 6.5v8A1.5 1.5 0 0 0 5.5 16H9' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E"); }
   #${WORD_POPOVER_ID} .icon-star { mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linejoin='round' d='m12 3 2.8 5.8 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.7l6.2-.9L12 3Z'/%3E%3C/svg%3E"); -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linejoin='round' d='m12 3 2.8 5.8 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.7l6.2-.9L12 3Z'/%3E%3C/svg%3E"); }
   #${WORD_POPOVER_ID} [data-word-favorite].is-active .icon-star, #${WORD_POPOVER_ID} .icon-star.is-filled { mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='m12 2.8 2.9 5.9 6.5.9-4.7 4.5 1.1 6.4-5.8-3.1-5.8 3.1 1.1-6.4-4.7-4.5 6.5-.9L12 2.8Z'/%3E%3C/svg%3E"); -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='m12 2.8 2.9 5.9 6.5.9-4.7 4.5 1.1 6.4-5.8-3.1-5.8 3.1 1.1-6.4-4.7-4.5 6.5-.9L12 2.8Z'/%3E%3C/svg%3E"); }
   #${WORD_POPOVER_ID} .icon-close { mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' d='m7 7 10 10m0-10L7 17'/%3E%3C/svg%3E"); -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' d='m7 7 10 10m0-10L7 17'/%3E%3C/svg%3E"); }
+  #${WORD_POPOVER_ID} .model-translator-word-tool-icon.icon-pin,
+  #${WORD_POPOVER_ID} .model-translator-word-tool-icon.icon-copy { mask-size: 15px 15px; -webkit-mask-size: 15px 15px; }
+  #${WORD_POPOVER_ID} .model-translator-word-tool-icon.icon-star { mask-size: 12.5px 12.5px; -webkit-mask-size: 12.5px 12.5px; }
+  #${WORD_POPOVER_ID} .model-translator-word-tool-icon.icon-close { mask-size: 18px 18px; -webkit-mask-size: 18px 18px; }
 
   #${WORD_POPOVER_ID} .model-translator-word-language {
     display: flex;
