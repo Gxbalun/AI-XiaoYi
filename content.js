@@ -1175,10 +1175,11 @@ function initFloatingLauncher() {
           </div>
         </div>
         <button class="tool-button tool-button-primary-self" type="button" data-action="self" data-tip="自助翻译"><span class="ui-icon icon-spark" aria-hidden="true"></span></button>
-        <button class="tool-button" type="button" data-action="history" data-tip="历史记录"><span class="ui-icon icon-history" aria-hidden="true"></span></button>
         <button class="tool-button" type="button" data-action="wordbook" data-tip="单词本"><span class="ui-icon icon-book" aria-hidden="true"></span></button>
-        <button class="tool-button" type="button" data-action="usage" data-tip="Token 用量"><span class="ui-icon icon-token" aria-hidden="true"></span></button>
-        <button class="tool-button" type="button" data-action="settings" data-tip="AI 配置"><span class="ui-icon icon-gear" aria-hidden="true"></span></button>
+        <button class="tool-button tool-button-more" type="button" data-more-trigger data-tip="更多功能" title="更多功能" aria-label="更多功能" aria-expanded="false"><span class="ui-icon icon-more" aria-hidden="true"></span></button>
+        <button class="tool-button tool-button-overflow" type="button" data-action="history" data-tip="历史记录" hidden><span class="ui-icon icon-history" aria-hidden="true"></span></button>
+        <button class="tool-button tool-button-overflow" type="button" data-action="usage" data-tip="Token 用量" hidden><span class="ui-icon icon-token" aria-hidden="true"></span></button>
+        <button class="tool-button tool-button-overflow" type="button" data-action="settings" data-tip="AI 配置" hidden><span class="ui-icon icon-gear" aria-hidden="true"></span></button>
       </nav>
       <div class="dismiss-menu" hidden>
         <button type="button" data-dismiss="pause">歇 2 小时</button>
@@ -1237,7 +1238,7 @@ function initFloatingLauncher() {
       left: -16px;
       bottom: 22px;
       width: 70px;
-      height: 236px;
+      height: 158px;
       pointer-events: none;
     }
 
@@ -1260,26 +1261,25 @@ function initFloatingLauncher() {
       z-index: 5;
       width: 38px;
       height: 38px;
-      border: 1px solid rgba(179, 216, 255, 0.95);
-      border-radius: 14px;
-      background: rgba(255, 255, 255, 0.82);
-      box-shadow: 0 10px 26px rgba(64, 158, 255, 0.24);
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
       cursor: grab;
       pointer-events: auto;
-      opacity: 0.78;
-      padding: 2px;
-      transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+      opacity: 0.72;
+      padding: 0;
+      transition: transform 160ms ease, opacity 160ms ease;
       -webkit-user-select: none;
       user-select: none;
       touch-action: none;
     }
 
     .floating-button:hover {
-      border-color: #409eff;
-      background: rgba(255, 255, 255, 0.94);
-      box-shadow: 0 12px 30px rgba(64, 158, 255, 0.24);
+      background: transparent;
+      box-shadow: none;
       opacity: 1;
-      transform: translateY(-1px);
+      transform: none;
     }
 
     .floating-button:active,
@@ -1292,8 +1292,10 @@ function initFloatingLauncher() {
       display: block;
       width: 100%;
       height: 100%;
-      border-radius: 12px;
+      border-radius: 0;
       pointer-events: none;
+      filter: drop-shadow(0 4px 7px rgba(64, 158, 255, 0.24));
+      transform: translate(3px, 1px);
     }
 
     .floating-cluster.is-page-translating .floating-button::after {
@@ -1323,21 +1325,46 @@ function initFloatingLauncher() {
       position: absolute;
       z-index: 6;
       left: -5px;
-      bottom: -5px;
+      bottom: -16px;
       width: 16px;
       height: 16px;
       border: 0;
       border-radius: 999px;
-      background: rgba(75, 85, 99, 0.78);
+      background: rgba(100, 116, 139, 0.5);
       color: #ffffff;
       cursor: pointer;
-      font-size: 12px;
-      line-height: 15px;
+      font-size: 0;
+      line-height: 0;
       padding: 0;
-      box-shadow: 0 6px 14px rgba(15, 23, 42, 0.18);
+      box-shadow: 0 5px 12px rgba(15, 23, 42, 0.12);
       opacity: 0;
       pointer-events: none;
-      transition: opacity 140ms ease, transform 140ms ease;
+      transition: opacity 140ms ease, transform 140ms ease, background 140ms ease;
+    }
+
+    .floating-dismiss-trigger::before,
+    .floating-dismiss-trigger::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 7px;
+      height: 1.25px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.92);
+    }
+
+    .floating-dismiss-trigger::before {
+      transform: translate(-50%, -50%) rotate(45deg);
+    }
+
+    .floating-dismiss-trigger::after {
+      transform: translate(-50%, -50%) rotate(-45deg);
+    }
+
+    .floating-dismiss-trigger:hover {
+      background: rgba(100, 116, 139, 0.66);
+      transform: scale(1.06);
     }
 
     .floating-cluster:hover .floating-dismiss-trigger,
@@ -1354,8 +1381,8 @@ function initFloatingLauncher() {
       bottom: 34px;
       display: flex;
       flex-direction: column-reverse;
-      gap: 6px;
-      padding: 8px 6px;
+      gap: 3px;
+      padding: 6px 5px;
       border: 1px solid rgba(226, 232, 240, 0.95);
       border-radius: 10px;
       background: rgba(255, 255, 255, 0.74);
@@ -1421,6 +1448,11 @@ function initFloatingLauncher() {
     .tool-button-page-wrap .tool-button {
       width: 100%;
       height: 100%;
+    }
+
+    .tool-button-more[hidden],
+    .tool-button-overflow[hidden] {
+      display: none;
     }
 
     .page-display-dot {
@@ -1588,6 +1620,11 @@ function initFloatingLauncher() {
       -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M4 5h7v7H4V5Zm9 0h7v7h-7V5ZM4 14h7v5H4v-5Zm9 0h7v5h-7v-5Z'/%3E%3C/svg%3E");
     }
 
+    .icon-more {
+      mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='5' cy='12' r='2' fill='black'/%3E%3Ccircle cx='12' cy='12' r='2' fill='black'/%3E%3Ccircle cx='19' cy='12' r='2' fill='black'/%3E%3C/svg%3E");
+      -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='5' cy='12' r='2' fill='black'/%3E%3Ccircle cx='12' cy='12' r='2' fill='black'/%3E%3Ccircle cx='19' cy='12' r='2' fill='black'/%3E%3C/svg%3E");
+    }
+
     .ui-icon.icon-gear {
       mask-size: 12.5px 12.5px;
       -webkit-mask-size: 12.5px 12.5px;
@@ -1618,6 +1655,11 @@ function initFloatingLauncher() {
     .ui-icon.icon-token {
       mask-size: 15.5px 15.5px;
       -webkit-mask-size: 15.5px 15.5px;
+    }
+
+    .ui-icon.icon-more {
+      mask-size: 14px 14px;
+      -webkit-mask-size: 14px 14px;
     }
 
     .tool-button:hover {
@@ -1824,34 +1866,6 @@ function initFloatingLauncher() {
       transition: transform 140ms ease, background 140ms ease, color 140ms ease;
     }
 
-    .panel-tool[data-tip]::after {
-      content: attr(data-tip);
-      position: absolute;
-      z-index: 6;
-      top: calc(100% + 7px);
-      right: 0;
-      width: max-content;
-      max-width: 120px;
-      padding: 5px 7px;
-      border-radius: 7px;
-      background: rgba(15, 23, 42, 0.9);
-      color: #fff;
-      font-size: 10px;
-      font-weight: 600;
-      line-height: 1.2;
-      opacity: 0;
-      pointer-events: none;
-      transform: translateY(-3px);
-      transition: opacity 120ms ease, transform 120ms ease;
-      white-space: nowrap;
-    }
-
-    .panel-tool[data-tip]:hover::after,
-    .panel-tool[data-tip]:focus-visible::after {
-      opacity: 1;
-      transform: translateY(0);
-    }
-
     .panel-tool:hover {
       background: #ecf5ff;
       color: #409eff;
@@ -1935,7 +1949,7 @@ function initFloatingLauncher() {
 
     .panel-opacity-handle {
       position: absolute;
-      z-index: 2;
+      z-index: 4;
       top: 2px;
       left: var(--opacity-position, 100%);
       width: 10px;
@@ -1945,8 +1959,13 @@ function initFloatingLauncher() {
       background: #409eff;
       box-sizing: border-box;
       box-shadow: 0 1px 4px rgba(64, 158, 255, 0.38);
-      pointer-events: none;
+      cursor: grab;
+      pointer-events: auto;
       transform: translateX(-50%);
+    }
+
+    .panel-opacity-slider:active .panel-opacity-handle {
+      cursor: grabbing;
     }
 
     .panel-opacity-ticks {
@@ -2728,6 +2747,8 @@ function initFloatingLauncher() {
   const dismissTrigger = shadow.querySelector(".floating-dismiss-trigger");
   const dismissMenu = shadow.querySelector(".dismiss-menu");
   const menu = shadow.querySelector(".floating-menu");
+  const moreToggle = shadow.querySelector(".tool-button-more");
+  const overflowButtons = [...shadow.querySelectorAll(".tool-button-overflow")];
   const panel = shadow.querySelector(".floating-panel");
   const panelHead = shadow.querySelector(".panel-head");
   const title = shadow.querySelector(".panel-head h2");
@@ -2764,12 +2785,24 @@ function initFloatingLauncher() {
     panelPointerY: 0,
     panelOpacity: 100,
     panelOpacityDragging: false,
+    panelOpacityMoved: false,
+    panelOpacityPointerX: 0,
+    suppressOpacityControlClick: false,
     panelPinned: false,
     activeAction: "",
-    pageDisplayMenuOpen: false
+    pageDisplayMenuOpen: false,
+    moreMenuOpen: false
   };
 
-  const supportsOpacityControls = (action) => action === "self" || action === "history";
+  const updateMoreMenu = (open) => {
+    state.moreMenuOpen = Boolean(open);
+    moreToggle.hidden = state.moreMenuOpen;
+    moreToggle.setAttribute("aria-expanded", String(state.moreMenuOpen));
+    overflowButtons.forEach((overflowButton) => {
+      overflowButton.hidden = !state.moreMenuOpen;
+    });
+  };
+  const supportsOpacityControls = (action) => action === "self" || action === "history" || action === "wordbook";
   const applyPanelAppearance = (preferences = {}) => {
     state.panelOpacity = Math.min(PANEL_OPACITY_MAX, Math.max(PANEL_OPACITY_MIN, Number(preferences.opacity) || PANEL_OPACITY_MAX));
     const ratio = state.panelOpacity / PANEL_OPACITY_MAX;
@@ -2801,9 +2834,11 @@ function initFloatingLauncher() {
     state.panelPinned = false;
     updatePanelPinState();
   };
-  const closeFloatingPanel = () => {
+  const closeFloatingPanel = ({ keepMenuExpanded = false } = {}) => {
     panel.hidden = true;
     state.activeAction = "";
+    menu.classList.remove("is-pinned");
+    if (!keepMenuExpanded) updateMoreMenu(false);
     closePanelOpacityControl();
     resetPanelPin();
   };
@@ -2857,6 +2892,9 @@ function initFloatingLauncher() {
     if (!insideDismiss) {
       dismissMenu.hidden = true;
       dismissTrigger.classList.remove("is-open");
+    }
+    if (!path.includes(menu) && !insidePanel) {
+      updateMoreMenu(false);
     }
     if (!panelOpacityControl.hidden && !path.includes(panelOpacityControl) && !path.includes(panelOpacityToggle)) {
       closePanelOpacityControl();
@@ -2946,7 +2984,7 @@ function initFloatingLauncher() {
     saveFloatingPosition(state);
   });
 
-  close.addEventListener("click", closeFloatingPanel);
+  close.addEventListener("click", () => closeFloatingPanel());
 
   panelPinToggle.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -2960,7 +2998,11 @@ function initFloatingLauncher() {
     panelOpacityToggle.setAttribute("aria-expanded", String(!panelOpacityControl.hidden));
   });
 
-  panelOpacityControl.addEventListener("click", () => {
+  panelOpacityControl.addEventListener("click", (event) => {
+    if (state.suppressOpacityControlClick) {
+      event.stopPropagation();
+      return;
+    }
     closePanelOpacityControl();
   });
 
@@ -2974,6 +3016,8 @@ function initFloatingLauncher() {
     if (event.target.closest("[data-opacity]")) return;
     event.preventDefault();
     state.panelOpacityDragging = true;
+    state.panelOpacityMoved = false;
+    state.panelOpacityPointerX = event.clientX;
     updateOpacityFromPointer(event);
     panelOpacitySlider.setPointerCapture(event.pointerId);
   });
@@ -2981,12 +3025,21 @@ function initFloatingLauncher() {
   panelOpacitySlider.addEventListener("pointermove", (event) => {
     if (!state.panelOpacityDragging) return;
     event.preventDefault();
+    if (Math.abs(event.clientX - state.panelOpacityPointerX) > 2) {
+      state.panelOpacityMoved = true;
+    }
     updateOpacityFromPointer(event);
   });
 
   const finishOpacityDrag = () => {
     if (!state.panelOpacityDragging) return;
     state.panelOpacityDragging = false;
+    if (state.panelOpacityMoved) {
+      state.suppressOpacityControlClick = true;
+      window.setTimeout(() => {
+        state.suppressOpacityControlClick = false;
+      }, 0);
+    }
     savePanelPreferences();
   };
   panelOpacitySlider.addEventListener("pointerup", finishOpacityDrag);
@@ -3004,6 +3057,13 @@ function initFloatingLauncher() {
     savePanelPreferences();
   });
 
+  moreToggle.addEventListener("pointerenter", () => updateMoreMenu(true));
+  moreToggle.addEventListener("focus", () => updateMoreMenu(true));
+
+  menu.addEventListener("mouseleave", () => {
+    if (!menu.classList.contains("is-pinned")) updateMoreMenu(false);
+  });
+
   menu.addEventListener("click", async (event) => {
     const displayOption = event.target.closest("[data-page-display]");
     if (displayOption) {
@@ -3019,6 +3079,7 @@ function initFloatingLauncher() {
     dismissMenu.hidden = true;
     dismissTrigger.classList.remove("is-open");
     const action = actionButton.dataset.action;
+    const actionRect = actionButton.getBoundingClientRect();
     if (action === "display") {
       state.pageDisplayMenuOpen = !state.pageDisplayMenuOpen;
       updateFloatingPageButton(menu, state);
@@ -3028,9 +3089,8 @@ function initFloatingLauncher() {
       await runFloatingPageAction(actionButton, menu, state, status);
       return;
     }
-    const actionRect = actionButton.getBoundingClientRect();
     if (!panel.hidden && state.activeAction === action) {
-      closeFloatingPanel();
+      closeFloatingPanel({ keepMenuExpanded: true });
       return;
     }
     resetPanelPin();
@@ -3039,6 +3099,7 @@ function initFloatingLauncher() {
     state.panelManualOffsetY = null;
     setFloatingPanelAnchor(state, actionRect);
     panel.hidden = false;
+    menu.classList.add("is-pinned");
     configurePanelControls(action);
     renderFloatingPanel(action, { title, status, body, panel });
     applyFloatingPosition(wrapper, panel, state);
