@@ -1,5 +1,5 @@
 (() => {
-const CONTENT_VERSION = "1.1.1";
+const CONTENT_VERSION = "1.1.3";
 if (window.__MODEL_TRANSLATOR_CONTENT_VERSION__ === CONTENT_VERSION) {
   return;
 }
@@ -17,7 +17,7 @@ const PANEL_OPACITY_MID = 70;
 const PANEL_OPACITY_MAX = 100;
 const ASSISTANT_MODE_ENABLED_KEY = "assistantModeEnabled";
 const ASSISTANT_MODE_PAUSED_UNTIL_KEY = "assistantModePausedUntil";
-const ASSISTANT_MODE_PAUSE_MS = 2 * 60 * 60 * 1000;
+const ASSISTANT_MODE_PAUSE_MS = 30 * 60 * 1000;
 const DEFAULT_SETTINGS = {
   baseUrl: "https://api.openai.com/v1/chat/completions",
   apiKey: "",
@@ -72,7 +72,8 @@ const pageTranslationCache = new Map();
 
 document.addEventListener("mouseup", (event) => {
   if (isTranslatorUiTarget(event.target)) return;
-  window.setTimeout(handleSelectionChange, 80);
+  const pointerPosition = { clientX: event.clientX, clientY: event.clientY };
+  window.setTimeout(() => handleSelectionChange(pointerPosition), 80);
 });
 
 document.addEventListener("click", (event) => {
@@ -158,7 +159,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-function handleSelectionChange() {
+function handleSelectionChange(pointerPosition = null) {
   if (document.getElementById(POPOVER_ID)) return;
 
   const selection = window.getSelection();
@@ -172,10 +173,10 @@ function handleSelectionChange() {
 
   currentSelection = text;
   currentRange = selection.getRangeAt(0).cloneRange();
-  showSelectionButton(currentRange);
+  showSelectionButton(currentRange, pointerPosition);
 }
 
-function showSelectionButton(range) {
+function showSelectionButton(range, pointerPosition = null) {
   removeElement(POPOVER_ID);
 
   const rect = getRangeRect(range);
@@ -195,9 +196,27 @@ function showSelectionButton(range) {
   button.title = getSingleEnglishWord(currentSelection) ? "查看单词详情" : "翻译选中文本";
   button.dataset.readyAt = String(Date.now() + 300);
 
+  const buttonSize = 32;
+  const pointerGap = 8;
+  const viewportGap = 6;
+  const hasPointerPosition = Number.isFinite(pointerPosition?.clientX) && Number.isFinite(pointerPosition?.clientY);
+  const anchorX = hasPointerPosition ? pointerPosition.clientX : rect.right;
+  const anchorY = hasPointerPosition ? pointerPosition.clientY : rect.bottom;
+  let clientLeft = anchorX + pointerGap;
+  let clientTop = anchorY + pointerGap;
+
+  if (clientLeft + buttonSize > window.innerWidth - viewportGap) {
+    clientLeft = anchorX - buttonSize - pointerGap;
+  }
+  if (clientTop + buttonSize > window.innerHeight - viewportGap) {
+    clientTop = anchorY - buttonSize - pointerGap;
+  }
+  clientLeft = Math.max(viewportGap, Math.min(clientLeft, window.innerWidth - buttonSize - viewportGap));
+  clientTop = Math.max(viewportGap, Math.min(clientTop, window.innerHeight - buttonSize - viewportGap));
+
   Object.assign(button.style, {
-    top: `${window.scrollY + rect.bottom + 6}px`,
-    left: `${window.scrollX + rect.right + 6}px`
+    top: `${window.scrollY + clientTop}px`,
+    left: `${window.scrollX + clientLeft}px`
   });
 }
 
@@ -1168,21 +1187,21 @@ function initFloatingLauncher() {
       <nav class="floating-menu" aria-label="小译快捷功能">
         <div class="tool-button-page-wrap">
           <button class="tool-button tool-button-primary-page" type="button" data-action="page" data-tip="整页翻译"><span class="ui-icon icon-page" aria-hidden="true"></span></button>
-          <button class="page-display-dot" type="button" data-action="display" data-tip="显示格式" title="显示格式" aria-label="显示格式" aria-expanded="false"></button>
+          <button class="page-display-dot" type="button" data-action="display" data-tip="显示格式" aria-label="显示格式" aria-expanded="false"></button>
           <div class="floating-page-display-menu" hidden>
             <button type="button" data-page-display="translated">仅译文</button>
             <button type="button" data-page-display="bilingual">双语显示</button>
           </div>
         </div>
         <button class="tool-button tool-button-primary-self" type="button" data-action="self" data-tip="自助翻译"><span class="ui-icon icon-spark" aria-hidden="true"></span></button>
-        <button class="tool-button" type="button" data-action="wordbook" data-tip="单词本"><span class="ui-icon icon-book" aria-hidden="true"></span></button>
-        <button class="tool-button tool-button-more" type="button" data-more-trigger data-tip="更多功能" title="更多功能" aria-label="更多功能" aria-expanded="false"><span class="ui-icon icon-more" aria-hidden="true"></span></button>
-        <button class="tool-button tool-button-overflow" type="button" data-action="history" data-tip="历史记录" hidden><span class="ui-icon icon-history" aria-hidden="true"></span></button>
-        <button class="tool-button tool-button-overflow" type="button" data-action="usage" data-tip="Token 用量" hidden><span class="ui-icon icon-token" aria-hidden="true"></span></button>
-        <button class="tool-button tool-button-overflow" type="button" data-action="settings" data-tip="AI 配置" hidden><span class="ui-icon icon-gear" aria-hidden="true"></span></button>
+        <button class="tool-button tool-button-primary-wordbook" type="button" data-action="wordbook" data-tip="单词本"><span class="ui-icon icon-book" aria-hidden="true"></span></button>
+        <button class="tool-button tool-button-more" type="button" data-more-trigger data-tip="更多功能" aria-label="更多功能" aria-expanded="false"><span class="ui-icon icon-more" aria-hidden="true"></span></button>
+        <button class="tool-button tool-button-overflow" type="button" data-action="history" data-tip="历史记录" style="--more-index: 0" hidden><span class="ui-icon icon-history" aria-hidden="true"></span></button>
+        <button class="tool-button tool-button-overflow" type="button" data-action="usage" data-tip="Token 用量" style="--more-index: 1" hidden><span class="ui-icon icon-token" aria-hidden="true"></span></button>
+        <button class="tool-button tool-button-overflow" type="button" data-action="settings" data-tip="AI 配置" style="--more-index: 2" hidden><span class="ui-icon icon-gear" aria-hidden="true"></span></button>
       </nav>
       <div class="dismiss-menu" hidden>
-        <button type="button" data-dismiss="pause">歇 2 小时</button>
+        <button type="button" data-dismiss="pause">歇 30 分钟</button>
         <button type="button" data-dismiss="disable">收起小译</button>
       </div>
     </div>
@@ -1227,8 +1246,8 @@ function initFloatingLauncher() {
       position: fixed;
       top: var(--floating-y, 45vh);
       left: var(--floating-x, calc(100vw - 62px));
-      width: 38px;
-      height: 38px;
+      width: 36px;
+      height: 36px;
       pointer-events: auto;
     }
 
@@ -1259,15 +1278,15 @@ function initFloatingLauncher() {
     .floating-button {
       position: relative;
       z-index: 5;
-      width: 38px;
-      height: 38px;
+      width: 36px;
+      height: 36px;
       border: 0;
       border-radius: 0;
       background: transparent;
       box-shadow: none;
       cursor: grab;
       pointer-events: auto;
-      opacity: 0.72;
+      opacity: 0.62;
       padding: 0;
       transition: transform 160ms ease, opacity 160ms ease;
       -webkit-user-select: none;
@@ -1280,6 +1299,12 @@ function initFloatingLauncher() {
       box-shadow: none;
       opacity: 1;
       transform: none;
+    }
+
+    .floating-cluster:hover .floating-button,
+    .floating-cluster:focus-within .floating-button,
+    .floating-cluster:has(.floating-menu.is-pinned) .floating-button {
+      opacity: 1;
     }
 
     .floating-button:active,
@@ -1375,39 +1400,52 @@ function initFloatingLauncher() {
     }
 
     .floating-menu {
+      --menu-motion-duration: 190ms;
+      --menu-motion-curve: cubic-bezier(0.4, 0, 0.2, 1);
       position: absolute;
       z-index: 1;
       left: 50%;
-      bottom: 34px;
+      bottom: 32px;
       display: flex;
       flex-direction: column-reverse;
-      gap: 3px;
-      padding: 6px 5px;
+      gap: 2px;
+      padding: 5px 4px;
       border: 1px solid rgba(226, 232, 240, 0.95);
-      border-radius: 10px;
+      border-radius: 9px;
       background: rgba(255, 255, 255, 0.74);
       box-shadow: 0 8px 22px rgba(15, 23, 42, 0.1);
+      box-sizing: border-box;
       opacity: 0;
       pointer-events: none;
-      transform: translate(-50%, 14px) scale(0.96);
-      transition: opacity 150ms ease, transform 150ms ease;
+      transform: translate(-50%, 14px) scale(0.86);
+      transform-origin: center bottom;
+      transition: opacity 150ms ease, transform var(--menu-motion-duration) var(--menu-motion-curve);
+    }
+
+    .floating-menu.is-more-animating {
+      overflow: hidden;
+      will-change: height;
+      transition: height 360ms cubic-bezier(0.34, 1.56, 0.64, 1), opacity 150ms ease, transform 150ms ease;
     }
 
     .floating-wrapper.is-left-side .floating-menu {
       left: 50%;
-      transform: translate(-50%, 14px) scale(0.96);
+      transform: translate(-50%, 14px) scale(0.86);
     }
 
     .floating-wrapper.is-near-top .floating-menu {
-      top: 34px;
+      top: 32px;
       bottom: auto;
       flex-direction: column;
-      transform: translate(-50%, -14px) scale(0.96);
+      transform: translate(-50%, -14px) scale(0.86);
+      transform-origin: center top;
     }
 
     .floating-cluster:hover .floating-menu,
     .floating-cluster:focus-within .floating-menu,
     .floating-menu.is-pinned {
+      --menu-motion-duration: 410ms;
+      --menu-motion-curve: cubic-bezier(0.16, 1.42, 0.3, 1);
       opacity: 1;
       pointer-events: auto;
       transform: translate(-50%, -10px) scale(1);
@@ -1424,10 +1462,13 @@ function initFloatingLauncher() {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 28px;
-      height: 28px;
+      flex: 0 0 26px;
+      width: 26px;
+      min-width: 26px;
+      height: 26px;
+      min-height: 26px;
       border: 0;
-      border-radius: 10px;
+      border-radius: 9px;
       background: transparent;
       color: #1f2937;
       box-shadow: none;
@@ -1440,9 +1481,9 @@ function initFloatingLauncher() {
 
     .tool-button-page-wrap {
       position: relative;
-      flex: 0 0 28px;
-      width: 28px;
-      height: 28px;
+      flex: 0 0 26px;
+      width: 26px;
+      height: 26px;
     }
 
     .tool-button-page-wrap .tool-button {
@@ -1455,13 +1496,63 @@ function initFloatingLauncher() {
       display: none;
     }
 
+    .tool-button-overflow {
+      --more-shift: 11px;
+    }
+
+    .floating-wrapper.is-near-top .tool-button-overflow {
+      --more-shift: -11px;
+    }
+
+    .floating-menu.is-more-expanding .tool-button-overflow {
+      animation: floatingMoreSpringIn 390ms cubic-bezier(0.22, 1.35, 0.36, 1) both;
+      animation-delay: calc(var(--more-index) * 34ms);
+    }
+
+    .floating-menu.is-more-collapsing .tool-button-overflow {
+      animation: floatingMoreSpringOut 240ms cubic-bezier(0.4, 0, 0.6, 1) both;
+      animation-delay: calc((2 - var(--more-index)) * 18ms);
+    }
+
+    @keyframes floatingMoreSpringIn {
+      0% {
+        opacity: 0;
+        transform: translateY(var(--more-shift)) scale(0.62);
+      }
+      62% {
+        opacity: 1;
+        transform: translateY(calc(var(--more-shift) * -0.14)) scale(1.1);
+      }
+      82% {
+        transform: translateY(calc(var(--more-shift) * 0.05)) scale(0.97);
+      }
+      100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    @keyframes floatingMoreSpringOut {
+      0% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+      35% {
+        transform: translateY(calc(var(--more-shift) * -0.08)) scale(1.04);
+      }
+      100% {
+        opacity: 0;
+        transform: translateY(var(--more-shift)) scale(0.56);
+      }
+    }
+
     .page-display-dot {
       position: absolute;
       z-index: 3;
-      top: -3px;
-      right: -3px;
-      width: 11px;
-      height: 11px;
+      top: -2px;
+      right: -2px;
+      width: 10px;
+      height: 10px;
       padding: 0;
       border: 2px solid rgba(255, 255, 255, 0.95);
       border-radius: 999px;
@@ -1493,12 +1584,13 @@ function initFloatingLauncher() {
       right: 42px;
       width: max-content;
       max-width: 120px;
-      padding: 5px 8px;
-      border-radius: 8px;
+      padding: 3px 6px;
+      border-radius: 5px;
       background: rgba(15, 23, 42, 0.88);
       color: #ffffff;
       font-size: 11px;
-      font-weight: 600;
+      font-weight: 400;
+      line-height: 1.2;
       opacity: 0;
       pointer-events: none;
       transform: translateY(-50%) translateX(4px);
@@ -1525,7 +1617,7 @@ function initFloatingLauncher() {
       position: absolute;
       z-index: 5;
       top: 0;
-      right: 35px;
+      right: 33px;
       bottom: auto;
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1564,7 +1656,7 @@ function initFloatingLauncher() {
 
     .floating-wrapper.is-left-side .floating-page-display-menu {
       right: auto;
-      left: 35px;
+      left: 33px;
     }
 
     .ui-icon {
@@ -1684,6 +1776,11 @@ function initFloatingLauncher() {
       color: #27a35c;
     }
 
+    .tool-button-primary-wordbook {
+      background: #fdf6ec;
+      color: #d99a2b;
+    }
+
     .tool-button-primary-page:hover {
       background: #d9ecff;
       color: #337ecc;
@@ -1692,6 +1789,11 @@ function initFloatingLauncher() {
     .tool-button-primary-self:hover {
       background: #e1f3e8;
       color: #1f8b4c;
+    }
+
+    .tool-button-primary-wordbook:hover {
+      background: #faecd8;
+      color: #c98718;
     }
 
     .tool-button.is-busy {
@@ -1727,12 +1829,13 @@ function initFloatingLauncher() {
       right: 42px;
       width: max-content;
       max-width: 120px;
-      padding: 5px 8px;
-      border-radius: 8px;
+      padding: 3px 6px;
+      border-radius: 5px;
       background: rgba(15, 23, 42, 0.88);
       color: #ffffff;
       font-size: 11px;
-      font-weight: 600;
+      font-weight: 400;
+      line-height: 1.2;
       opacity: 0;
       pointer-events: none;
       transform: translateY(-50%) translateX(4px);
@@ -1753,21 +1856,23 @@ function initFloatingLauncher() {
     .dismiss-menu {
       position: absolute;
       z-index: 4;
-      left: -134px;
-      bottom: -68px;
+      right: 28px;
+      left: auto;
+      bottom: -57px;
       display: grid;
       gap: 0;
-      width: 124px;
-      padding: 6px;
+      width: max-content;
+      padding: 4px;
       border: 1px solid rgba(15, 23, 42, 0.14);
-      border-radius: 15px;
+      border-radius: 12px;
       background: rgba(255, 255, 255, 0.88);
-      box-shadow: 0 14px 34px rgba(15, 23, 42, 0.18);
+      box-shadow: 0 10px 26px rgba(15, 23, 42, 0.16);
       pointer-events: auto;
     }
 
     .floating-wrapper.is-left-side .dismiss-menu {
-      left: 23px;
+      left: 28px;
+      right: auto;
     }
 
     .dismiss-menu[hidden] {
@@ -1775,15 +1880,20 @@ function initFloatingLauncher() {
     }
 
     .dismiss-menu button {
-      min-height: 30px;
+      min-height: 26px;
       border: 0;
-      border-radius: 10px;
+      border-radius: 8px;
       background: transparent;
       color: #1f2937;
       cursor: pointer;
-      font-size: 12px;
+      font-size: 11px;
       text-align: left;
-      padding: 0 8px;
+      white-space: nowrap;
+      padding: 0 7px;
+    }
+
+    .dismiss-menu button:first-child {
+      padding-right: 17px;
     }
 
     .dismiss-menu button:hover {
@@ -2749,6 +2859,7 @@ function initFloatingLauncher() {
   const menu = shadow.querySelector(".floating-menu");
   const moreToggle = shadow.querySelector(".tool-button-more");
   const overflowButtons = [...shadow.querySelectorAll(".tool-button-overflow")];
+  const compactActionButtons = [...shadow.querySelectorAll(".floating-menu [data-action]:not(.tool-button-overflow)")];
   const panel = shadow.querySelector(".floating-panel");
   const panelHead = shadow.querySelector(".panel-head");
   const title = shadow.querySelector(".panel-head h2");
@@ -2791,16 +2902,78 @@ function initFloatingLauncher() {
     panelPinned: false,
     activeAction: "",
     pageDisplayMenuOpen: false,
-    moreMenuOpen: false
+    moreMenuOpen: false,
+    moreMenuTimer: 0,
+    moreMenuFrame: 0,
+    compactMenuHeight: 0,
+    suppressMoreHover: false,
+    moreHoverResetTimer: 0
   };
 
-  const updateMoreMenu = (open) => {
-    state.moreMenuOpen = Boolean(open);
-    moreToggle.hidden = state.moreMenuOpen;
-    moreToggle.setAttribute("aria-expanded", String(state.moreMenuOpen));
+  const releaseMoreHoverSuppression = () => {
+    if (state.moreHoverResetTimer) window.clearTimeout(state.moreHoverResetTimer);
+    state.moreHoverResetTimer = 0;
+    state.suppressMoreHover = false;
+  };
+  const renderMoreMenu = (expanded) => {
+    moreToggle.hidden = expanded;
+    moreToggle.setAttribute("aria-expanded", String(expanded));
     overflowButtons.forEach((overflowButton) => {
-      overflowButton.hidden = !state.moreMenuOpen;
+      overflowButton.hidden = !expanded;
     });
+  };
+  const clearMoreMenuAnimation = () => {
+    if (state.moreMenuTimer) window.clearTimeout(state.moreMenuTimer);
+    if (state.moreMenuFrame) window.cancelAnimationFrame(state.moreMenuFrame);
+    state.moreMenuTimer = 0;
+    state.moreMenuFrame = 0;
+    menu.classList.remove("is-more-animating", "is-more-expanding", "is-more-collapsing");
+  };
+  const finishMoreMenuAnimation = () => {
+    clearMoreMenuAnimation();
+    if (!state.moreMenuOpen) {
+      renderMoreMenu(false);
+      if (state.suppressMoreHover) {
+        state.moreHoverResetTimer = window.setTimeout(releaseMoreHoverSuppression, 80);
+      }
+    }
+    menu.style.height = "";
+  };
+  const updateMoreMenu = (open) => {
+    const expanded = Boolean(open);
+    const animating = menu.classList.contains("is-more-animating");
+    if (expanded === state.moreMenuOpen && !animating) return;
+
+    const startHeight = menu.getBoundingClientRect().height;
+    clearMoreMenuAnimation();
+    menu.style.height = `${startHeight}px`;
+
+    if (expanded) {
+      if (!state.moreMenuOpen && !state.compactMenuHeight) {
+        state.compactMenuHeight = startHeight;
+      }
+      state.moreMenuOpen = true;
+      renderMoreMenu(true);
+      menu.style.height = "auto";
+      const expandedHeight = menu.getBoundingClientRect().height;
+      menu.style.height = `${startHeight}px`;
+      menu.classList.add("is-more-animating", "is-more-expanding");
+      void menu.offsetHeight;
+      state.moreMenuFrame = window.requestAnimationFrame(() => {
+        menu.style.height = `${expandedHeight}px`;
+      });
+      state.moreMenuTimer = window.setTimeout(finishMoreMenuAnimation, 480);
+      return;
+    }
+
+    state.moreMenuOpen = false;
+    moreToggle.setAttribute("aria-expanded", "false");
+    menu.classList.add("is-more-animating", "is-more-collapsing");
+    void menu.offsetHeight;
+    state.moreMenuFrame = window.requestAnimationFrame(() => {
+      menu.style.height = `${state.compactMenuHeight || startHeight}px`;
+    });
+    state.moreMenuTimer = window.setTimeout(finishMoreMenuAnimation, 310);
   };
   const supportsOpacityControls = (action) => action === "self" || action === "history" || action === "wordbook";
   const applyPanelAppearance = (preferences = {}) => {
@@ -2837,8 +3010,12 @@ function initFloatingLauncher() {
   const closeFloatingPanel = ({ keepMenuExpanded = false } = {}) => {
     panel.hidden = true;
     state.activeAction = "";
-    menu.classList.remove("is-pinned");
-    if (!keepMenuExpanded) updateMoreMenu(false);
+    if (keepMenuExpanded) {
+      menu.classList.toggle("is-pinned", !menu.matches(":hover"));
+    } else {
+      menu.classList.remove("is-pinned");
+      updateMoreMenu(false);
+    }
     closePanelOpacityControl();
     resetPanelPin();
   };
@@ -2894,6 +3071,7 @@ function initFloatingLauncher() {
       dismissTrigger.classList.remove("is-open");
     }
     if (!path.includes(menu) && !insidePanel) {
+      if (panel.hidden) menu.classList.remove("is-pinned");
       updateMoreMenu(false);
     }
     if (!panelOpacityControl.hidden && !path.includes(panelOpacityControl) && !path.includes(panelOpacityToggle)) {
@@ -2984,7 +3162,7 @@ function initFloatingLauncher() {
     saveFloatingPosition(state);
   });
 
-  close.addEventListener("click", () => closeFloatingPanel());
+  close.addEventListener("click", () => closeFloatingPanel({ keepMenuExpanded: true }));
 
   panelPinToggle.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -3057,10 +3235,33 @@ function initFloatingLauncher() {
     savePanelPreferences();
   });
 
-  moreToggle.addEventListener("pointerenter", () => updateMoreMenu(true));
+  moreToggle.addEventListener("pointerenter", () => {
+    if (state.suppressMoreHover) {
+      releaseMoreHoverSuppression();
+      return;
+    }
+    updateMoreMenu(true);
+  });
+  moreToggle.addEventListener("pointerleave", releaseMoreHoverSuppression);
   moreToggle.addEventListener("focus", () => updateMoreMenu(true));
 
+  menu.addEventListener("mouseenter", () => {
+    if (panel.hidden) menu.classList.remove("is-pinned");
+  });
+
+  compactActionButtons.forEach((actionButton) => {
+    actionButton.addEventListener("pointerenter", () => {
+      if (state.moreMenuOpen && !menu.classList.contains("is-pinned")) {
+        if (state.moreHoverResetTimer) window.clearTimeout(state.moreHoverResetTimer);
+        state.moreHoverResetTimer = 0;
+        state.suppressMoreHover = true;
+        updateMoreMenu(false);
+      }
+    });
+  });
+
   menu.addEventListener("mouseleave", () => {
+    releaseMoreHoverSuppression();
     if (!menu.classList.contains("is-pinned")) updateMoreMenu(false);
   });
 
@@ -3145,8 +3346,8 @@ function applyFloatingPosition(wrapper, panel, state) {
 
   const panelWidth = 320;
   const panelHeight = Math.min(520, window.innerHeight - 28);
-  const anchorX = Number.isFinite(state.panelAnchorX) ? state.x + state.panelOffsetX : state.x + 19;
-  const anchorY = Number.isFinite(state.panelAnchorY) ? state.y + state.panelOffsetY : state.y + 19;
+  const anchorX = Number.isFinite(state.panelAnchorX) ? state.x + state.panelOffsetX : state.x + 18;
+  const anchorY = Number.isFinite(state.panelAnchorY) ? state.y + state.panelOffsetY : state.y + 18;
   const defaultPanelLeft = anchorX > window.innerWidth / 2
     ? anchorX - panelWidth - 26
     : anchorX + 26;
@@ -3176,7 +3377,7 @@ function setFloatingPanelAnchor(state, rect) {
 
 function clampFloatingState(state) {
   const margin = 8;
-  const size = 38;
+  const size = 36;
   state.x = Math.min(Math.max(margin, state.x), Math.max(margin, window.innerWidth - size - margin));
   state.y = Math.min(Math.max(margin, state.y), Math.max(margin, window.innerHeight - size - margin));
 }
@@ -3223,7 +3424,7 @@ function updateFloatingPageButton(menu, state) {
     const bilingual = pageTranslationDisplayMode === "bilingual";
     displayDot.classList.toggle("is-bilingual", bilingual);
     displayDot.dataset.tip = "显示格式";
-    displayDot.title = displayDot.dataset.tip;
+    displayDot.removeAttribute("title");
     displayDot.setAttribute("aria-label", displayDot.dataset.tip);
     displayDot.setAttribute("aria-expanded", String(Boolean(state.pageDisplayMenuOpen)));
     displayMenu.hidden = !state.pageDisplayMenuOpen;
