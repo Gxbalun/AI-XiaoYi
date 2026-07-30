@@ -10,11 +10,12 @@
     <main class="popup">
       <header>
         <div class="brand">
-          <img class="avatar" src="icons/icon.svg" alt="" />
+          <img class="avatar" src="icons/assistant-idle.svg" alt="" />
           <h1>小译</h1>
         </div>
         <div class="header-actions">
-          <button id="assistantModeToggle" class="assistant-mode-toggle" type="button">助理模式</button>
+          <button id="assistantModeToggle" class="mode-toggle assistant-mode-toggle" type="button">随身译</button>
+          <button id="selectionModeToggle" class="mode-toggle selection-mode-toggle" type="button">随手划</button>
         </div>
         <span id="status" role="status"></span>
       </header>
@@ -121,7 +122,7 @@
             <textarea id="selfSourceText" class="translate-box source-box" rows="4" placeholder="输入要翻译的内容"></textarea>
             <div class="result-wrap">
               <div id="selfResultText" class="translate-box result-box learning-result" role="textbox" aria-readonly="true" data-placeholder="翻译结果"></div>
-              <button id="copySelfResult" class="copy-result-button" type="button">复制</button>
+              <button id="copySelfResult" class="copy-result-button" type="button" data-tip="复制" aria-label="复制"><span class="copy-icon" aria-hidden="true"></span></button>
             </div>
           </div>
         </section>
@@ -142,18 +143,18 @@
           <button id="showUsage" class="quiet-button" type="button"><span class="with-icon"><span class="ui-icon icon-token" aria-hidden="true">▥</span><span>Token 用量</span></span></button>
         </section>
 
-        <p class="selection-hint"><span class="ui-icon icon-tip" aria-hidden="true">💡</span><span>划词后点击选区旁的“译”按钮，即可查看划词翻译。</span></p>
+        <p class="selection-hint"><span class="ui-icon icon-tip" aria-hidden="true">💡</span><span>选中文字后点击旁边的小译图标，即可使用“随手划”。</span></p>
       </section>
 
       <section id="historyView" class="view page-view" hidden>
         <div class="page-head">
-          <button class="back-button" type="button" data-back><span class="with-icon"><span class="ui-icon icon-back" aria-hidden="true">‹</span><span>返回</span></span></button>
+          <button class="back-button" type="button" data-back aria-label="返回"><span class="ui-icon icon-back" aria-hidden="true">‹</span></button>
           <h2><span class="with-icon"><span class="ui-icon icon-history" aria-hidden="true">◷</span><span>翻译历史</span></span></h2>
         </div>
         <div class="page-toolbar">
           <select id="historyFilter" aria-label="历史类型">
             <option value="all">全部类型</option>
-            <option value="selection">划词翻译</option>
+            <option value="selection">随手划</option>
             <option value="page">整页翻译</option>
             <option value="self">自助翻译</option>
           </select>
@@ -165,7 +166,7 @@
 
       <section id="usageView" class="view page-view" hidden>
         <div class="page-head">
-          <button class="back-button" type="button" data-back><span class="with-icon"><span class="ui-icon icon-back" aria-hidden="true">‹</span><span>返回</span></span></button>
+          <button class="back-button" type="button" data-back aria-label="返回"><span class="ui-icon icon-back" aria-hidden="true">‹</span></button>
           <h2><span class="with-icon"><span class="ui-icon icon-token" aria-hidden="true">▥</span><span>Token 用量</span></span></h2>
           <button id="clearUsage" class="danger-button page-action" type="button"><span class="with-icon"><span class="ui-icon icon-close" aria-hidden="true">×</span><span>清空统计</span></span></button>
         </div>
@@ -174,7 +175,7 @@
 
       <section id="wordBookView" class="view page-view" hidden>
         <div class="page-head">
-          <button class="back-button" type="button" data-back><span class="with-icon"><span class="ui-icon icon-back" aria-hidden="true">‹</span><span>返回</span></span></button>
+          <button class="back-button" type="button" data-back aria-label="返回"><span class="ui-icon icon-back" aria-hidden="true">‹</span></button>
           <h2><span class="with-icon"><span class="ui-icon icon-book" aria-hidden="true">▤</span><span>单词本</span></span></h2>
           <button id="clearWordBook" class="danger-button page-action" type="button"><span class="with-icon"><span class="ui-icon icon-close" aria-hidden="true">×</span><span>清空单词本</span></span></button>
         </div>

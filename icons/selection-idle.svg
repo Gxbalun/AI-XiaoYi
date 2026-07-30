@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="18 13 92 92" role="img" aria-label="小译随手划待机">
+  <defs>
+    <filter id="searchShadow" x="-35%" y="-35%" width="185%" height="195%">
+      <feDropShadow dx="1.6" dy="2.4" stdDeviation="1.65" flood-color="#334155" flood-opacity=".3"/>
+    </filter>
+  </defs>
+  <path d="M35 41c7-7 18-9 29-3v55c-11-6-22-4-29 3V41z" fill="#fff" stroke="#93C5FD" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M64 38c11-6 22-4 29 3v55c-7-7-18-9-29-3V38z" fill="#fff" stroke="#93C5FD" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M45 55h10M45 68h10M74 55h10M74 68h10" stroke="#64748B" stroke-width="4" stroke-linecap="round"/>
+  <ellipse cx="50" cy="29" rx="4" ry="4" fill="#334155">
+    <animate attributeName="ry" dur="4.8s" repeatCount="indefinite"
+      keyTimes="0;.55;.57;.595;1" values="4;4;.5;4;4"/>
+  </ellipse>
+  <ellipse cx="78" cy="29" rx="4" ry="4" fill="#334155">
+    <animate attributeName="ry" dur="4.8s" repeatCount="indefinite"
+      keyTimes="0;.55;.57;.595;1" values="4;4;.5;4;4"/>
+  </ellipse>
+  <path d="M56 31 C61 36 67 36 72 31" fill="none" stroke="#22C55E" stroke-width="4" stroke-linecap="round"/>
+  <path d="M98 28l4 8 8 4-8 4-4 8-4-8-8-4 8-4 4-8z" fill="#F59E0B"/>
+  <g filter="url(#searchShadow)">
+    <circle cx="79.5" cy="62" r="15.75" fill="#dbeafe" fill-opacity=".68" stroke="#409EFF" stroke-width="3.4"/>
+    <path d="M90.6 73.1 L104.5 87" fill="none" stroke="#64748B" stroke-width="5" stroke-linecap="round"/>
+    <path d="M70.5 54.4 C74 50.8 79.4 49.6 84 51.2" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" opacity=".94"/>
+  </g>
+</svg>

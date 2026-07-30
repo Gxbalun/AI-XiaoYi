@@ -1,0 +1,146 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="18 13 92 92" role="img" aria-label="小译连续柔软翻页">
+  <defs>
+    <linearGradient id="paperOne" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".82"/>
+      <stop offset=".45" stop-color="#f8fbff" stop-opacity=".7"/>
+      <stop offset=".72" stop-color="#bfdbfe" stop-opacity=".66"/>
+      <stop offset=".9" stop-color="#eff6ff" stop-opacity=".74"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity=".8"/>
+    </linearGradient>
+    <linearGradient id="paperTwo" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".78"/>
+      <stop offset=".4" stop-color="#eff6ff" stop-opacity=".68"/>
+      <stop offset=".7" stop-color="#93c5fd" stop-opacity=".58"/>
+      <stop offset=".88" stop-color="#dbeafe" stop-opacity=".7"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity=".78"/>
+    </linearGradient>
+    <filter id="curlShadow" x="-40%" y="-30%" width="185%" height="175%">
+      <feDropShadow dx="1.1" dy="1.8" stdDeviation="1.25" flood-color="#2563eb" flood-opacity=".2"/>
+    </filter>
+  </defs>
+  <style>
+    .spark {
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: sparkle 3.8s ease-out infinite;
+    }
+    @keyframes sparkle {
+      0%, 44% { transform: scale(.86) rotate(0deg); opacity: .74; }
+      52% { transform: scale(1.16) rotate(13deg); opacity: 1; }
+      62%, 100% { transform: scale(1) rotate(0deg); opacity: .84; }
+    }
+    @media (prefers-reduced-motion: reduce) { .spark { animation: none; } }
+  </style>
+
+  <path d="M35 41c7-7 18-9 29-3v55c-11-6-22-4-29 3V41z" fill="#fff" stroke="#93C5FD" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M64 38c11-6 22-4 29 3v55c-7-7-18-9-29-3V38z" fill="#fff" stroke="#93C5FD" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M45 55h10M45 68h10M74 55h10M74 68h10" stroke="#64748B" stroke-width="4" stroke-linecap="round"/>
+
+  <g filter="url(#curlShadow)">
+    <path d="M64 38 C74 32 85 34 93 41 C91 53 92 69 93 82 C93 88 93 93 93 96 C84 90 74 88 64 93 C64 75 64 56 64 38 Z"
+      fill="url(#paperOne)" stroke="#60A5FA" stroke-opacity=".78" stroke-width="2.7" stroke-linejoin="round" opacity="0">
+      <animate attributeName="d" dur="3.8s" begin="0s" repeatCount="indefinite"
+        keyTimes="0;.03;.087;.15;.22;.272;.29;1"
+        calcMode="spline"
+        keySplines=".4 0 .6 1;.32 0 .2 1;.3 0 .18 1;.3 0 .18 1;.32 0 .2 1;.4 0 .6 1;.4 0 .6 1"
+        values="
+          M64 38 C74 32 85 34 93 41 C91 53 92 69 93 82 C93 88 93 93 93 96 C84 90 74 88 64 93 C64 75 64 56 64 38 Z;
+          M64 38 C74 32 85 34 93 41 C91 53 92 69 93 82 C93 88 93 93 93 96 C84 90 74 88 64 93 C64 75 64 56 64 38 Z;
+          M64 38 C73 30 84 33 89 40 C88 51 88 67 89 79 C90 85 91 90 91 94 C83 89 73 88 64 93 C64 75 64 56 64 38 Z;
+          M64 38 C73 29 82 34 80 44 C78 53 72 61 74 71 C76 80 82 87 86 91 C78 88 70 89 64 93 C64 75 64 56 64 38 Z;
+          M64 38 C55 29 46 34 48 44 C50 53 56 61 54 71 C52 80 46 87 42 91 C50 88 58 89 64 93 C64 75 64 56 64 38 Z;
+          M64 38 C55 30 44 33 39 40 C40 51 40 67 39 79 C38 85 37 90 37 94 C45 89 55 88 64 93 C64 75 64 56 64 38 Z;
+          M64 38 C54 32 43 34 35 41 C37 53 36 69 35 82 C35 88 35 93 35 96 C44 90 54 88 64 93 C64 75 64 56 64 38 Z;
+          M64 38 C54 32 43 34 35 41 C37 53 36 69 35 82 C35 88 35 93 35 96 C44 90 54 88 64 93 C64 75 64 56 64 38 Z"/>
+      <animate attributeName="opacity" dur="3.8s" begin="0s" repeatCount="indefinite"
+        keyTimes="0;.018;.272;.295;1" values="0;1;1;0;0"/>
+    </path>
+    <path d="M68 40 C77 36 86 38 90 43 C89 55 89 71 90 84" fill="none" stroke="#ffffff" stroke-opacity=".82" stroke-width="2.1" stroke-linecap="round" opacity="0">
+      <animate attributeName="d" dur="3.8s" begin="0s" repeatCount="indefinite"
+        keyTimes="0;.03;.087;.15;.22;.272;.29;1"
+        calcMode="spline"
+        keySplines=".4 0 .6 1;.32 0 .2 1;.3 0 .18 1;.3 0 .18 1;.32 0 .2 1;.4 0 .6 1;.4 0 .6 1"
+        values="
+          M68 40 C77 36 86 38 90 43 C89 55 89 71 90 84;
+          M68 40 C77 36 86 38 90 43 C89 55 89 71 90 84;
+          M67 40 C76 34 84 37 86 43 C84 54 85 69 87 81;
+          M66 40 C75 33 79 38 77 46 C74 56 70 62 72 72;
+          M62 40 C53 33 49 38 51 46 C54 56 58 62 56 72;
+          M61 40 C52 34 44 37 42 43 C44 54 43 69 41 81;
+          M60 40 C51 36 42 38 38 43 C39 55 39 71 38 84;
+          M60 40 C51 36 42 38 38 43 C39 55 39 71 38 84"/>
+      <animate attributeName="opacity" dur="3.8s" begin="0s" repeatCount="indefinite"
+        keyTimes="0;.03;.087;.22;.272;.295;1" values="0;.45;.92;.92;.45;0;0"/>
+    </path>
+  </g>
+
+  <g filter="url(#curlShadow)">
+    <path d="M64 38 C74 32 85 34 93 41 C91 53 92 69 93 82 C93 88 93 93 93 96 C84 90 74 88 64 93 C64 75 64 56 64 38 Z"
+      fill="url(#paperTwo)" stroke="#60A5FA" stroke-opacity=".74" stroke-width="2.7" stroke-linejoin="round" opacity="0">
+      <animate attributeName="d" dur="3.8s" begin=".95s" repeatCount="indefinite"
+        keyTimes="0;.03;.087;.15;.22;.272;.29;1"
+        calcMode="spline"
+        keySplines=".4 0 .6 1;.32 0 .2 1;.3 0 .18 1;.3 0 .18 1;.32 0 .2 1;.4 0 .6 1;.4 0 .6 1"
+        values="
+          M64 38 C74 32 85 34 93 41 C91 53 92 69 93 82 C93 88 93 93 93 96 C84 90 74 88 64 93 C64 75 64 56 64 38 Z;
+          M64 38 C74 32 85 34 93 41 C91 53 92 69 93 82 C93 88 93 93 93 96 C84 90 74 88 64 93 C64 75 64 56 64 38 Z;
+          M64 38 C73 30 84 33 89 40 C88 51 88 67 89 79 C90 85 91 90 91 94 C83 89 73 88 64 93 C64 75 64 56 64 38 Z;
+          M64 38 C73 29 82 34 80 44 C78 53 72 61 74 71 C76 80 82 87 86 91 C78 88 70 89 64 93 C64 75 64 56 64 38 Z;
+          M64 38 C55 29 46 34 48 44 C50 53 56 61 54 71 C52 80 46 87 42 91 C50 88 58 89 64 93 C64 75 64 56 64 38 Z;
+          M64 38 C55 30 44 33 39 40 C40 51 40 67 39 79 C38 85 37 90 37 94 C45 89 55 88 64 93 C64 75 64 56 64 38 Z;
+          M64 38 C54 32 43 34 35 41 C37 53 36 69 35 82 C35 88 35 93 35 96 C44 90 54 88 64 93 C64 75 64 56 64 38 Z;
+          M64 38 C54 32 43 34 35 41 C37 53 36 69 35 82 C35 88 35 93 35 96 C44 90 54 88 64 93 C64 75 64 56 64 38 Z"/>
+      <animate attributeName="opacity" dur="3.8s" begin=".95s" repeatCount="indefinite"
+        keyTimes="0;.018;.272;.295;1" values="0;1;1;0;0"/>
+    </path>
+    <path d="M68 40 C77 36 86 38 90 43 C89 55 89 71 90 84" fill="none" stroke="#ffffff" stroke-opacity=".8" stroke-width="2.1" stroke-linecap="round" opacity="0">
+      <animate attributeName="d" dur="3.8s" begin=".95s" repeatCount="indefinite"
+        keyTimes="0;.03;.087;.15;.22;.272;.29;1"
+        calcMode="spline"
+        keySplines=".4 0 .6 1;.32 0 .2 1;.3 0 .18 1;.3 0 .18 1;.32 0 .2 1;.4 0 .6 1;.4 0 .6 1"
+        values="
+          M68 40 C77 36 86 38 90 43 C89 55 89 71 90 84;
+          M68 40 C77 36 86 38 90 43 C89 55 89 71 90 84;
+          M67 40 C76 34 84 37 86 43 C84 54 85 69 87 81;
+          M66 40 C75 33 79 38 77 46 C74 56 70 62 72 72;
+          M62 40 C53 33 49 38 51 46 C54 56 58 62 56 72;
+          M61 40 C52 34 44 37 42 43 C44 54 43 69 41 81;
+          M60 40 C51 36 42 38 38 43 C39 55 39 71 38 84;
+          M60 40 C51 36 42 38 38 43 C39 55 39 71 38 84"/>
+      <animate attributeName="opacity" dur="3.8s" begin=".95s" repeatCount="indefinite"
+        keyTimes="0;.03;.087;.22;.272;.295;1" values="0;.42;.88;.88;.42;0;0"/>
+    </path>
+  </g>
+
+  <ellipse cx="50" cy="29" rx="4" ry="4" fill="#334155">
+    <animate attributeName="cx" dur="3.8s" repeatCount="indefinite"
+      keyTimes="0;.24;.27;.52;.56;1" values="51.1;48.9;51.1;48.9;50;50"/>
+    <animate attributeName="ry" dur="3.8s" repeatCount="indefinite"
+      keyTimes="0;.55;.57;.59;1" values="4;4;.55;4;4"/>
+  </ellipse>
+  <ellipse cx="78" cy="29" rx="4" ry="4" fill="#334155">
+    <animate attributeName="cx" dur="3.8s" repeatCount="indefinite"
+      keyTimes="0;.24;.27;.52;.56;1" values="79.1;76.9;79.1;76.9;78;78"/>
+    <animate attributeName="ry" dur="3.8s" repeatCount="indefinite"
+      keyTimes="0;.55;.57;.59;1" values="4;4;.55;4;4"/>
+  </ellipse>
+  <g opacity="0">
+    <path d="M61.5 35.2 C62.5 34.7 65.5 34.7 66.5 35.2 C66.3 35.3 65.2 35.4 64 35.4 C62.8 35.4 61.7 35.3 61.5 35.2 Z"
+      fill="#fb7185" stroke="#f43f5e" stroke-width=".85" stroke-linejoin="round">
+      <animate attributeName="d" dur="3.8s" repeatCount="indefinite"
+        keyTimes="0;.59;.64;.71;.76;1"
+        values="
+          M61.5 35.2 C62.5 34.7 65.5 34.7 66.5 35.2 C66.3 35.3 65.2 35.4 64 35.4 C62.8 35.4 61.7 35.3 61.5 35.2 Z;
+          M61.5 35.2 C62.5 34.7 65.5 34.7 66.5 35.2 C66.3 35.3 65.2 35.4 64 35.4 C62.8 35.4 61.7 35.3 61.5 35.2 Z;
+          M59.5 34.8 C61.5 33.7 66.5 33.7 68.5 34.8 C68.3 37.5 67.7 40.8 64 42 C60.3 40.8 59.7 37.5 59.5 34.8 Z;
+          M59.5 34.8 C61.5 33.7 66.5 33.7 68.5 34.8 C68.3 37.5 67.7 40.8 64 42 C60.3 40.8 59.7 37.5 59.5 34.8 Z;
+          M61.5 35.2 C62.5 34.7 65.5 34.7 66.5 35.2 C66.3 35.3 65.2 35.4 64 35.4 C62.8 35.4 61.7 35.3 61.5 35.2 Z;
+          M61.5 35.2 C62.5 34.7 65.5 34.7 66.5 35.2 C66.3 35.3 65.2 35.4 64 35.4 C62.8 35.4 61.7 35.3 61.5 35.2 Z"/>
+    </path>
+    <path d="M64 36.2 V40.3" fill="none" stroke="#fda4af" stroke-width=".85" stroke-linecap="round"/>
+    <animate attributeName="opacity" dur="3.8s" repeatCount="indefinite"
+      keyTimes="0;.59;.64;.71;.76;1" values="0;0;1;1;0;0"/>
+  </g>
+  <path d="M56 31 C61 36 67 36 72 31" fill="none" stroke="#22C55E" stroke-width="4" stroke-linecap="round"/>
+  <path class="spark" d="M98 28l4 8 8 4-8 4-4 8-4-8-8-4 8-4 4-8z" fill="#F59E0B"/>
+</svg>

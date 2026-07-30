@@ -10,13 +10,21 @@ const TOKEN_EVENTS_KEY = "tokenUsageEvents";
 const TOKEN_TOTALS_KEY = "tokenUsageTotals";
 const WORD_CACHE_KEY = "englishWordCache";
 const WORD_BOOK_KEY = "englishWordBook";
+const PAGE_PERSISTENT_CACHE_KEY = "pageTranslationPersistentCacheV2";
 const HISTORY_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_HISTORY_ITEMS = 300;
 const MAX_TOKEN_EVENTS = 1000;
 const WORD_CACHE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const MAX_WORD_CACHE_ITEMS = 3000;
 const MAX_WORD_BOOK_ITEMS = 3000;
+const MAX_PAGE_HISTORY_TEXT = 12000;
+const PAGE_PERSISTENT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const PAGE_PERSISTENT_CACHE_MAX = 1200;
+const MODEL_REQUEST_TIMEOUT_MS = 45000;
 const activeRequests = new Map();
+let historyStorageQueue = Promise.resolve();
+let tokenStorageQueue = Promise.resolve();
+let pageCacheStorageQueue = Promise.resolve();
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "translate-text") {
@@ -27,16 +35,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "translate-self") {
-    translateSelfText(message, sender)
+    const assistantTabId = Number(sender?.tab?.id || message.assistantTabId || 0);
+    const assistantRequestId = `self-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    notifyAssistantTranslationBusy(assistantTabId, assistantRequestId, true)
+      .then(() => translateSelfText(message, sender))
       .then((translation) => sendResponse({ ok: true, translation }))
-      .catch((error) => sendResponse({ ok: false, error: friendlyErrorMessage(error) }));
+      .catch((error) => sendResponse({ ok: false, error: friendlyErrorMessage(error) }))
+      .finally(() => notifyAssistantTranslationBusy(assistantTabId, assistantRequestId, false));
     return true;
   }
 
   if (message?.type === "translate-batch") {
-    translateBatch(message.items || [], sender, message.requestId)
+    translateBatch(message.items || [], sender, message.requestId, message.batchId)
       .then((items) => sendResponse({ ok: true, items }))
-      .catch((error) => sendResponse({ ok: false, error: friendlyErrorMessage(error) }));
+      .catch((error) => sendResponse({
+        ok: false,
+        error: friendlyErrorMessage(error),
+        retryable: Boolean(error?.retryable),
+        retryAfterMs: Number(error?.retryAfterMs || 0)
+      }));
     return true;
   }
 
@@ -99,6 +116,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === "persist-page-translation-cache") {
+    persistPageTranslationCacheEntries(message.entries)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+    return true;
+  }
+
   if (message?.type === "get-history") {
     getHistory()
       .then((history) => sendResponse({ ok: true, history }))
@@ -127,6 +151,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 });
+
+function notifyAssistantTranslationBusy(tabId, requestId, busy) {
+  if (!tabId) return Promise.resolve();
+  return chrome.tabs.sendMessage(tabId, {
+    type: "assistant-translation-busy-v2",
+    requestId,
+    busy
+  }).catch(() => {});
+}
 
 async function getSettings() {
   const stored = await chrome.storage.sync.get(DEFAULT_SETTINGS);
@@ -383,7 +416,7 @@ async function testConnection(settings) {
   return result.content || "OK";
 }
 
-async function translateBatch(items, sender, requestId) {
+async function translateBatch(items, sender, requestId, batchId) {
   const settings = await getSettings();
   validateSettings(settings);
 
@@ -407,7 +440,12 @@ async function translateBatch(items, sender, requestId) {
     ],
     { requestId }
   );
-  await recordTokenUsage(result.usage, { mode: "page", model: result.model });
+  const stableBatchId = String(batchId || `${requestId || "page"}:${payload.map((item) => item.id).join(",")}`);
+  await recordTokenUsage(result.usage, {
+    mode: "page",
+    model: result.model,
+    eventId: `${requestId || "page"}:${stableBatchId}`
+  });
 
   const parsed = parseJsonArray(result.content);
   const byId = new Map(parsed.map((item) => [String(item.id), item.translation || ""]));
@@ -416,10 +454,12 @@ async function translateBatch(items, sender, requestId) {
     translation: byId.get(String(item.id)) || item.text
   }));
 
-  await addHistoryItem({
+  await upsertPageHistoryItem({
     mode: "page",
-    source: payload.map((item) => item.text).join("\n").slice(0, 1200),
-    translation: translatedItems.map((item) => item.translation).join("\n").slice(0, 1200),
+    pageRequestId: String(requestId || ""),
+    batchId: stableBatchId,
+    source: payload.map((item) => item.text).join("\n"),
+    translation: translatedItems.map((item) => item.translation).join("\n"),
     url: sender?.tab?.url || "",
     title: sender?.tab?.title || "",
     model: result.model,
@@ -441,6 +481,11 @@ async function callChatCompletions(settings, messages, options = {}) {
 
   let response;
   const controller = new AbortController();
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, MODEL_REQUEST_TIMEOUT_MS);
   if (options.requestId) {
     addActiveRequest(options.requestId, controller);
   }
@@ -462,10 +507,17 @@ async function callChatCompletions(settings, messages, options = {}) {
     });
   } catch (error) {
     if (error?.name === "AbortError") {
+      if (timedOut) {
+        throw createRequestError("模型接口响应超时。", {
+          retryable: true,
+          code: "timeout"
+        });
+      }
       throw new Error("已停止本次整页翻译。");
     }
     throw new Error(`无法连接模型接口：${endpoint}；${error.message || String(error)}`);
   } finally {
+    clearTimeout(timeoutId);
     if (options.requestId) {
       removeActiveRequest(options.requestId, controller);
     }
@@ -481,7 +533,14 @@ async function callChatCompletions(settings, messages, options = {}) {
 
   if (!response.ok) {
     const detail = data?.error?.message || data?.message || data?.raw || response.statusText;
-    throw new Error(`模型接口请求失败（HTTP ${response.status}）：${detail}；请求地址：${endpoint}`);
+    throw createRequestError(
+      `模型接口请求失败（HTTP ${response.status}）：${detail}；请求地址：${endpoint}`,
+      {
+        status: response.status,
+        retryable: response.status === 429 || response.status >= 500,
+        retryAfterMs: parseRetryAfter(response.headers.get("retry-after"))
+      }
+    );
   }
 
   const content = extractMessageContent(data);
@@ -663,30 +722,136 @@ function friendlyErrorMessage(error) {
   return raw || "请求失败了，请稍后再试。";
 }
 
-async function addHistoryItem(item) {
-  const now = Date.now();
-  const stored = await chrome.storage.local.get({ [HISTORY_KEY]: [] });
-  const next = [
-    {
-      id: `${now}-${Math.random().toString(36).slice(2)}`,
-      createdAt: now,
-      ...item
-    },
-    ...pruneHistory(stored[HISTORY_KEY] || [])
-  ].slice(0, MAX_HISTORY_ITEMS);
-
-  await chrome.storage.local.set({ [HISTORY_KEY]: next });
+function createRequestError(message, details = {}) {
+  const error = new Error(message);
+  Object.assign(error, details);
+  return error;
 }
 
-async function getHistory() {
-  const stored = await chrome.storage.local.get({ [HISTORY_KEY]: [] });
-  const history = pruneHistory(stored[HISTORY_KEY] || []);
-  await chrome.storage.local.set({ [HISTORY_KEY]: history });
-  return history;
+function parseRetryAfter(value) {
+  if (!value) return 0;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, Math.min(seconds * 1000, 15000));
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return 0;
+  return Math.max(0, Math.min(timestamp - Date.now(), 15000));
 }
 
-async function clearHistory() {
-  await chrome.storage.local.set({ [HISTORY_KEY]: [] });
+function queueHistoryStorage(task) {
+  const run = historyStorageQueue.then(task, task);
+  historyStorageQueue = run.catch(() => {});
+  return run;
+}
+
+function queueTokenStorage(task) {
+  const run = tokenStorageQueue.then(task, task);
+  tokenStorageQueue = run.catch(() => {});
+  return run;
+}
+
+function queuePageCacheStorage(task) {
+  const run = pageCacheStorageQueue.then(task, task);
+  pageCacheStorageQueue = run.catch(() => {});
+  return run;
+}
+
+function persistPageTranslationCacheEntries(entries) {
+  return queuePageCacheStorage(async () => {
+    const stored = await chrome.storage.local.get({ [PAGE_PERSISTENT_CACHE_KEY]: {} });
+    const cache = stored[PAGE_PERSISTENT_CACHE_KEY] || {};
+    const now = Date.now();
+
+    Object.keys(cache).forEach((key) => {
+      if (now - Number(cache[key]?.createdAt || 0) > PAGE_PERSISTENT_CACHE_TTL_MS) {
+        delete cache[key];
+      }
+    });
+
+    (Array.isArray(entries) ? entries : []).forEach((item) => {
+      if (!item || typeof item.key !== "string" || typeof item.translation !== "string") return;
+      const createdAt = Number(item.createdAt || now);
+      if (now - createdAt > PAGE_PERSISTENT_CACHE_TTL_MS) return;
+      if (Number(cache[item.key]?.createdAt || 0) > createdAt) return;
+      cache[item.key] = {
+        translation: item.translation,
+        createdAt
+      };
+    });
+
+    Object.entries(cache)
+      .sort((a, b) => Number(b[1]?.createdAt || 0) - Number(a[1]?.createdAt || 0))
+      .slice(PAGE_PERSISTENT_CACHE_MAX)
+      .forEach(([key]) => delete cache[key]);
+
+    await chrome.storage.local.set({ [PAGE_PERSISTENT_CACHE_KEY]: cache });
+  });
+}
+
+function addHistoryItem(item) {
+  return queueHistoryStorage(async () => {
+    const now = Date.now();
+    const stored = await chrome.storage.local.get({ [HISTORY_KEY]: [] });
+    const next = [
+      {
+        id: `${now}-${Math.random().toString(36).slice(2)}`,
+        createdAt: now,
+        ...item
+      },
+      ...pruneHistory(stored[HISTORY_KEY] || [])
+    ].slice(0, MAX_HISTORY_ITEMS);
+
+    await chrome.storage.local.set({ [HISTORY_KEY]: next });
+  });
+}
+
+function upsertPageHistoryItem(item) {
+  if (!item.pageRequestId) return addHistoryItem(item);
+  return queueHistoryStorage(async () => {
+    const now = Date.now();
+    const stored = await chrome.storage.local.get({ [HISTORY_KEY]: [] });
+    const history = pruneHistory(stored[HISTORY_KEY] || []);
+    const existingIndex = history.findIndex(
+      (entry) => entry.mode === "page" && entry.pageRequestId === item.pageRequestId
+    );
+    const existing = existingIndex >= 0 ? history.splice(existingIndex, 1)[0] : null;
+    const completedBatchIds = new Set(existing?.completedBatchIds || []);
+    if (completedBatchIds.has(item.batchId)) return;
+    completedBatchIds.add(item.batchId);
+
+    const nextItem = {
+      ...existing,
+      ...item,
+      id: existing?.id || `${now}-${Math.random().toString(36).slice(2)}`,
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+      source: appendHistoryText(existing?.source, item.source),
+      translation: appendHistoryText(existing?.translation, item.translation),
+      count: Number(existing?.count || 0) + Number(item.count || 0),
+      completedBatchIds: Array.from(completedBatchIds).slice(-200)
+    };
+    const next = [nextItem, ...history].slice(0, MAX_HISTORY_ITEMS);
+    await chrome.storage.local.set({ [HISTORY_KEY]: next });
+  });
+}
+
+function appendHistoryText(current, addition) {
+  return [current, addition]
+    .filter(Boolean)
+    .join("\n")
+    .slice(0, MAX_PAGE_HISTORY_TEXT);
+}
+
+function getHistory() {
+  return queueHistoryStorage(async () => {
+    const stored = await chrome.storage.local.get({ [HISTORY_KEY]: [] });
+    const history = pruneHistory(stored[HISTORY_KEY] || []);
+    await chrome.storage.local.set({ [HISTORY_KEY]: history });
+    return history;
+  });
+}
+
+function clearHistory() {
+  return queueHistoryStorage(() => chrome.storage.local.set({ [HISTORY_KEY]: [] }));
 }
 
 function pruneHistory(history) {
@@ -694,77 +859,84 @@ function pruneHistory(history) {
   return history.filter((item) => item.createdAt >= cutoff);
 }
 
-async function recordTokenUsage(usage, meta) {
+function recordTokenUsage(usage, meta) {
   if (!usage) return;
+  return queueTokenStorage(async () => {
+    const now = Date.now();
+    const stored = await chrome.storage.local.get({
+      [TOKEN_EVENTS_KEY]: [],
+      [TOKEN_TOTALS_KEY]: {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0
+      }
+    });
+    const currentEvents = stored[TOKEN_EVENTS_KEY] || [];
+    if (meta.eventId && currentEvents.some((event) => event.id === meta.eventId)) return;
 
-  const now = Date.now();
-  const stored = await chrome.storage.local.get({
-    [TOKEN_EVENTS_KEY]: [],
-    [TOKEN_TOTALS_KEY]: {
-      promptTokens: 0,
-      completionTokens: 0,
-      totalTokens: 0
-    }
-  });
+    const event = {
+      id: meta.eventId || `${now}-${Math.random().toString(36).slice(2)}`,
+      createdAt: now,
+      mode: meta.mode,
+      model: meta.model,
+      ...usage
+    };
+    const events = [event, ...currentEvents]
+      .filter((item) => now - item.createdAt <= HISTORY_TTL_MS)
+      .slice(0, MAX_TOKEN_EVENTS);
+    const totals = addUsage(stored[TOKEN_TOTALS_KEY], usage);
 
-  const event = {
-    createdAt: now,
-    mode: meta.mode,
-    model: meta.model,
-    ...usage
-  };
-  const events = [event, ...(stored[TOKEN_EVENTS_KEY] || [])]
-    .filter((item) => now - item.createdAt <= HISTORY_TTL_MS)
-    .slice(0, MAX_TOKEN_EVENTS);
-  const totals = addUsage(stored[TOKEN_TOTALS_KEY], usage);
-
-  await chrome.storage.local.set({
-    [TOKEN_EVENTS_KEY]: events,
-    [TOKEN_TOTALS_KEY]: totals
+    await chrome.storage.local.set({
+      [TOKEN_EVENTS_KEY]: events,
+      [TOKEN_TOTALS_KEY]: totals
+    });
   });
 }
 
-async function getTokenStats() {
-  const now = Date.now();
-  const stored = await chrome.storage.local.get({
-    [TOKEN_EVENTS_KEY]: [],
-    [TOKEN_TOTALS_KEY]: {
+function getTokenStats() {
+  return queueTokenStorage(async () => {
+    const now = Date.now();
+    const stored = await chrome.storage.local.get({
+      [TOKEN_EVENTS_KEY]: [],
+      [TOKEN_TOTALS_KEY]: {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0
+      }
+    });
+    const events = (stored[TOKEN_EVENTS_KEY] || []).filter((item) => now - item.createdAt <= HISTORY_TTL_MS);
+    const recent = events.reduce(addUsage, {
       promptTokens: 0,
       completionTokens: 0,
       totalTokens: 0
-    }
-  });
-  const events = (stored[TOKEN_EVENTS_KEY] || []).filter((item) => now - item.createdAt <= HISTORY_TTL_MS);
-  const recent = events.reduce(addUsage, {
-    promptTokens: 0,
-    completionTokens: 0,
-    totalTokens: 0
-  });
-  const byMode = events.reduce((totals, event) => {
-    const mode = event.mode || "other";
-    totals[mode] = addUsage(totals[mode], event);
-    return totals;
-  }, {});
+    });
+    const byMode = events.reduce((totals, event) => {
+      const mode = event.mode || "other";
+      totals[mode] = addUsage(totals[mode], event);
+      return totals;
+    }, {});
 
-  await chrome.storage.local.set({ [TOKEN_EVENTS_KEY]: events });
+    await chrome.storage.local.set({ [TOKEN_EVENTS_KEY]: events });
 
-  return {
-    recent,
-    total: stored[TOKEN_TOTALS_KEY],
-    byMode,
-    events
-  };
+    return {
+      recent,
+      total: stored[TOKEN_TOTALS_KEY],
+      byMode,
+      events
+    };
+  });
 }
 
-async function clearTokenStats() {
-  await chrome.storage.local.set({
-    [TOKEN_EVENTS_KEY]: [],
-    [TOKEN_TOTALS_KEY]: {
-      promptTokens: 0,
-      completionTokens: 0,
-      totalTokens: 0
-    }
-  });
+function clearTokenStats() {
+  return queueTokenStorage(() => chrome.storage.local.set({
+      [TOKEN_EVENTS_KEY]: [],
+      [TOKEN_TOTALS_KEY]: {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0
+      }
+    })
+  );
 }
 
 function addUsage(total, usage) {
