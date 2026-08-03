@@ -20,9 +20,11 @@ const WORD_POPOVER_ID = "model-translator-word-popover-v2";
 const FLOATING_HOST_ID = "model-translator-floating-host-v2";
 const FLOATING_GLASS_ID = "model-translator-floating-glass-v2";
 const FLOATING_GLASS_DEFINITIONS_ID = "model-translator-floating-glass-definitions-v2";
+const FLOATING_CONTROL_GLASS_ID = "model-translator-floating-control-glass-v2";
 const CONTENT_STYLE_ID = "model-translator-content-style-v2";
 const FLOATING_POSITION_KEY = "floatingButtonPosition";
 const FLOATING_PANEL_PREFERENCES_KEY = "floatingPanelPreferences";
+const FLOATING_DISPLAY_PREFERENCES_KEY = "floatingDisplayPreferences";
 const PAGE_DISPLAY_MODE_KEY = "pageTranslationDisplayMode";
 const ASSISTANT_IDLE_ICON_PATH = "icons/assistant-idle-floating.svg";
 const ASSISTANT_TRANSLATING_ICON_PATH = "icons/assistant-translating.svg";
@@ -31,6 +33,10 @@ const SELECTION_TRANSLATING_ICON_PATH = "icons/selection-translating.svg";
 const PANEL_OPACITY_MIN = 30;
 const PANEL_OPACITY_MID = 70;
 const PANEL_OPACITY_MAX = 100;
+const FLOATING_DISPLAY_DEFAULTS = Object.freeze({
+  material: "liquid-glass",
+  glassDensity: 0
+});
 const ASSISTANT_MODE_ENABLED_KEY = "assistantModeEnabled";
 const ASSISTANT_MODE_PAUSED_UNTIL_KEY = "assistantModePausedUntil";
 const SELECTION_TRANSLATION_ENABLED_KEY = "selectionTranslationEnabled";
@@ -2034,10 +2040,25 @@ function getFloatingShadowRoot() {
   return floatingAssistantShadow?.host?.isConnected ? floatingAssistantShadow : null;
 }
 
+function normalizeFloatingDisplayPreferences(value = {}) {
+  const legacyValue = value.menu && typeof value.menu === "object" ? value.menu : null;
+  const materialValue = value.material ?? legacyValue?.material;
+  const densityValue = Object.prototype.hasOwnProperty.call(value, "glassDensity")
+    ? value.glassDensity
+    : 0;
+  return {
+    material: materialValue === "acrylic" || materialValue === "liquid-glass"
+      ? materialValue
+      : FLOATING_DISPLAY_DEFAULTS.material,
+    glassDensity: Math.min(100, Math.max(0, Number(densityValue) || 0))
+  };
+}
+
 function removeFloatingLauncher() {
   document.getElementById(FLOATING_HOST_ID)?.remove();
   document.getElementById(FLOATING_GLASS_ID)?.remove();
   document.getElementById(FLOATING_GLASS_DEFINITIONS_ID)?.remove();
+  document.getElementById(FLOATING_CONTROL_GLASS_ID)?.remove();
   floatingAssistantShadow = null;
 }
 
@@ -2080,6 +2101,7 @@ function initFloatingLauncher() {
 
   document.getElementById(FLOATING_GLASS_ID)?.remove();
   document.getElementById(FLOATING_GLASS_DEFINITIONS_ID)?.remove();
+  document.getElementById(FLOATING_CONTROL_GLASS_ID)?.remove();
   const liquidFilterId = "model-translator-floating-menu-liquid-filter-v2";
   const liquidMapId = "model-translator-floating-menu-liquid-map-v2";
   const glassDefinitions = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -2149,7 +2171,18 @@ function initFloatingLauncher() {
     pointer-events: none;
     will-change: left, top, width, height, opacity;
   `;
-  document.documentElement.append(glassDefinitions, floatingGlass);
+  const floatingControlGlass = document.createElement("div");
+  floatingControlGlass.id = FLOATING_CONTROL_GLASS_ID;
+  floatingControlGlass.setAttribute("aria-hidden", "true");
+  floatingControlGlass.style.cssText = `
+    all: initial;
+    position: fixed;
+    z-index: 2147483645;
+    inset: 0;
+    overflow: visible;
+    pointer-events: none;
+  `;
+  document.documentElement.append(glassDefinitions, floatingGlass, floatingControlGlass);
 
   const host = document.createElement("div");
   host.id = FLOATING_HOST_ID;
@@ -2205,14 +2238,14 @@ function initFloatingLauncher() {
         <button class="tool-button tool-button-more" type="button" data-more-trigger data-tip="更多功能" aria-label="更多功能" aria-expanded="false"><span class="ui-icon icon-more" aria-hidden="true"></span></button>
         <button class="tool-button tool-button-overflow" type="button" data-action="history" data-tip="历史记录" style="--more-index: 0" hidden><span class="ui-icon icon-history" aria-hidden="true"></span></button>
         <button class="tool-button tool-button-overflow" type="button" data-action="usage" data-tip="Token 用量" style="--more-index: 1" hidden><span class="ui-icon icon-token" aria-hidden="true"></span></button>
-        <button class="tool-button tool-button-overflow" type="button" data-action="settings" data-tip="AI 配置" style="--more-index: 2" hidden><span class="ui-icon icon-gear" aria-hidden="true"></span></button>
+        <button class="tool-button tool-button-overflow" type="button" data-action="settings" data-tip="设置" style="--more-index: 2" hidden><span class="ui-icon icon-gear" aria-hidden="true"></span></button>
       </nav>
       <div class="dismiss-menu" hidden>
         <button type="button" data-dismiss="pause">歇 30 分钟</button>
         <button type="button" data-dismiss="disable">收起小译</button>
       </div>
     </div>
-    <section class="floating-panel" hidden>
+    <section class="floating-panel" data-material="acrylic" hidden>
       <header class="panel-head">
         <h2></h2>
         <div class="panel-controls" hidden>
@@ -2979,34 +3012,145 @@ function initFloatingLauncher() {
       transform: translateY(0) scale(0.94);
     }
 
+    .tool-button-primary-page,
+    .tool-button-primary-self,
+    .tool-button-primary-wordbook {
+      --tool-glass-active-base-alpha: var(--menu-glass-base-alpha, 0.12);
+      --tool-glass-active-tint-alpha: var(--menu-glass-tint-alpha, 0.1);
+      --tool-glass-active-border-alpha: var(--menu-glass-border-alpha, 0.34);
+      --tool-glass-active-shadow-alpha: var(--menu-glass-shadow-alpha, 0.13);
+      border: 1px solid rgba(var(--tool-glass-border-rgb), var(--tool-glass-active-border-alpha));
+      background:
+        linear-gradient(
+          145deg,
+          rgba(255, 255, 255, var(--menu-glass-highlight-alpha, 0.28)),
+          rgba(255, 255, 255, var(--menu-glass-highlight-tail-alpha, 0.035)) 48%,
+          rgba(var(--tool-glass-rgb), var(--tool-glass-active-tint-alpha))
+        ),
+        rgba(var(--tool-glass-rgb), var(--tool-glass-active-base-alpha));
+      color: var(--tool-glass-color);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.7),
+        inset 0 -1px 0 var(--tool-glass-bottom),
+        0 4px 10px rgba(var(--tool-glass-rgb), var(--tool-glass-active-shadow-alpha));
+      -webkit-backdrop-filter: brightness(1.06) saturate(1.1);
+      backdrop-filter: brightness(1.06) saturate(1.1);
+    }
+
     .tool-button-primary-page {
-      background: #ecf5ff;
-      color: #409eff;
+      --tool-glass-rgb: 64, 158, 255;
+      --tool-glass-border-rgb: 100, 179, 255;
+      --tool-glass-bottom: rgba(45, 119, 199, 0.14);
+      --tool-glass-color: #409eff;
     }
 
     .tool-button-primary-self {
-      background: #f0f9f4;
-      color: #27a35c;
+      --tool-glass-rgb: 39, 163, 92;
+      --tool-glass-border-rgb: 74, 184, 121;
+      --tool-glass-bottom: rgba(29, 124, 70, 0.13);
+      --tool-glass-color: #27a35c;
     }
 
     .tool-button-primary-wordbook {
-      background: #fdf6ec;
-      color: #d99a2b;
+      --tool-glass-rgb: 217, 154, 43;
+      --tool-glass-border-rgb: 226, 174, 80;
+      --tool-glass-bottom: rgba(173, 111, 19, 0.13);
+      --tool-glass-color: #d99a2b;
     }
 
     .tool-button-primary-page:hover {
-      background: #d9ecff;
+      --tool-glass-active-base-alpha: var(--menu-glass-hover-base-alpha, 0.2);
+      --tool-glass-active-tint-alpha: var(--menu-glass-hover-tint-alpha, 0.16);
+      --tool-glass-active-border-alpha: var(--menu-glass-hover-border-alpha, 0.48);
+      --tool-glass-active-shadow-alpha: var(--menu-glass-hover-shadow-alpha, 0.19);
       color: #337ecc;
     }
 
     .tool-button-primary-self:hover {
-      background: #e1f3e8;
+      --tool-glass-active-base-alpha: var(--menu-glass-hover-base-alpha, 0.19);
+      --tool-glass-active-tint-alpha: var(--menu-glass-hover-tint-alpha, 0.15);
+      --tool-glass-active-border-alpha: var(--menu-glass-hover-border-alpha, 0.45);
+      --tool-glass-active-shadow-alpha: var(--menu-glass-hover-shadow-alpha, 0.18);
       color: #1f8b4c;
     }
 
     .tool-button-primary-wordbook:hover {
-      background: #faecd8;
+      --tool-glass-active-base-alpha: var(--menu-glass-hover-base-alpha, 0.2);
+      --tool-glass-active-tint-alpha: var(--menu-glass-hover-tint-alpha, 0.16);
+      --tool-glass-active-border-alpha: var(--menu-glass-hover-border-alpha, 0.48);
+      --tool-glass-active-shadow-alpha: var(--menu-glass-hover-shadow-alpha, 0.18);
       color: #c98718;
+    }
+
+    .tool-button-more,
+    .tool-button-overflow {
+      border: 1px solid rgba(255, 255, 255, var(--menu-white-glass-border-alpha, 0.56));
+      background: linear-gradient(
+        145deg,
+        rgba(255, 255, 255, var(--menu-white-glass-top-alpha, 0.3)),
+        rgba(255, 255, 255, var(--menu-white-glass-tail-alpha, 0.065))
+      );
+      color: #64748b;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.72),
+        inset 0 -1px 0 rgba(71, 85, 105, 0.1),
+        0 4px 10px rgba(71, 85, 105, var(--menu-white-glass-shadow-alpha, 0.12));
+      -webkit-backdrop-filter: brightness(1.06) saturate(1.06);
+      backdrop-filter: brightness(1.06) saturate(1.06);
+    }
+
+    .tool-button-more:hover,
+    .tool-button-more:focus-visible,
+    .tool-button-overflow:hover,
+    .tool-button-overflow:focus-visible {
+      border-color: rgba(255, 255, 255, var(--menu-white-glass-hover-border-alpha, 0.78));
+      background: linear-gradient(
+        145deg,
+        rgba(255, 255, 255, var(--menu-white-glass-hover-top-alpha, 0.42)),
+        rgba(255, 255, 255, var(--menu-white-glass-hover-tail-alpha, 0.1))
+      );
+      color: #475569;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.84),
+        inset 0 -1px 0 rgba(71, 85, 105, 0.12),
+        0 5px 12px rgba(71, 85, 105, var(--menu-white-glass-hover-shadow-alpha, 0.16));
+    }
+
+    .floating-menu[data-material="acrylic"] {
+      border-color: rgba(203, 213, 225, 0.72);
+      background: rgba(248, 250, 252, 0.86);
+      box-shadow:
+        0 10px 24px rgba(15, 23, 42, 0.13),
+        inset 0 1px 0 rgba(255, 255, 255, 0.94);
+      -webkit-backdrop-filter: blur(15px) saturate(0.92);
+      backdrop-filter: blur(15px) saturate(0.92);
+    }
+
+    .floating-menu[data-material="acrylic"] .tool-button-primary-page {
+      border-color: transparent;
+      background: #ecf5ff;
+      box-shadow: none;
+    }
+
+    .floating-menu[data-material="acrylic"] .tool-button-primary-self {
+      border-color: transparent;
+      background: #f0f9f4;
+      box-shadow: none;
+    }
+
+    .floating-menu[data-material="acrylic"] .tool-button-primary-wordbook {
+      border-color: transparent;
+      background: #fdf6ec;
+      box-shadow: none;
+    }
+
+    .floating-menu[data-material="acrylic"] .tool-button-more,
+    .floating-menu[data-material="acrylic"] .tool-button-overflow {
+      border-color: rgba(226, 232, 240, 0.92);
+      background: rgba(255, 255, 255, 0.92);
+      box-shadow: none;
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
     }
 
     .tool-button.is-busy {
@@ -3224,6 +3368,14 @@ function initFloatingLauncher() {
       padding: 10px;
       animation: floatingPanelIn 180ms ease both;
       color: #111827;
+    }
+
+    .floating-panel[data-material="acrylic"] {
+      border-color: rgba(148, 163, 184, 0.24);
+      background: rgb(255 255 255 / var(--panel-background-opacity, 0.9));
+      box-shadow: 0 18px 46px rgba(15, 23, 42, 0.18);
+      -webkit-backdrop-filter: blur(18px) saturate(0.92);
+      backdrop-filter: blur(18px) saturate(0.92);
     }
 
     .panel-head h2,
@@ -3473,6 +3625,105 @@ function initFloatingLauncher() {
       color: #374151;
       font-size: 11px;
       font-weight: 650;
+    }
+
+    .settings-tabs,
+    .appearance-material-options {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 3px;
+      padding: 3px;
+      border: 1px solid rgba(203, 213, 225, 0.72);
+      border-radius: 11px;
+      background: rgba(241, 245, 249, 0.78);
+    }
+
+    .settings-tabs button,
+    .appearance-material-options button {
+      min-height: 28px;
+      padding: 0 8px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: #64748b;
+      cursor: pointer;
+      font: 650 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      transition: background 140ms ease, color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+    }
+
+    .settings-tabs button:hover,
+    .appearance-material-options button:hover {
+      color: #2563eb;
+    }
+
+    .settings-tabs button.is-selected,
+    .appearance-material-options button.is-selected {
+      background: rgba(255, 255, 255, 0.94);
+      color: #2563eb;
+      box-shadow: 0 2px 7px rgba(71, 85, 105, 0.12), inset 0 0 0 1px rgba(148, 163, 184, 0.12);
+    }
+
+    .settings-view {
+      display: grid;
+      gap: 9px;
+    }
+
+    .settings-view[hidden] {
+      display: none;
+    }
+
+    .appearance-card {
+      display: grid;
+      gap: 11px;
+      padding: 11px;
+      border: 1px solid rgba(203, 213, 225, 0.72);
+      border-radius: 14px;
+      background: rgba(248, 250, 252, 0.72);
+    }
+
+    .appearance-card-head {
+      display: grid;
+      gap: 3px;
+    }
+
+    .appearance-card-head strong {
+      color: #1f2937;
+      font-size: 12px;
+    }
+
+    .appearance-card-head span {
+      color: #64748b;
+      font-size: 10px;
+      line-height: 1.45;
+    }
+
+    .appearance-tone-control {
+      display: grid;
+      gap: 7px;
+    }
+
+    .appearance-tone-control[hidden] {
+      display: none;
+    }
+
+    .appearance-tone-head {
+      display: flex;
+      align-items: center;
+      color: #475569;
+      font-size: 10px;
+      font-weight: 650;
+    }
+
+    .appearance-tone-range {
+      width: 100%;
+      height: 18px;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      accent-color: #409eff;
+      cursor: pointer;
     }
 
     .api-key-field {
@@ -4560,6 +4811,8 @@ function initFloatingLauncher() {
   const pageProgressPopover = shadow.querySelector(".page-translation-progress-popover");
   const pageDisplayMenu = shadow.querySelector(".floating-page-display-menu");
   const floatingActionTooltip = shadow.querySelector(".floating-action-tooltip");
+  const selfButton = shadow.querySelector('.tool-button-primary-self');
+  const wordbookButton = shadow.querySelector('.tool-button-primary-wordbook');
   const moreToggle = shadow.querySelector(".tool-button-more");
   const overflowButtons = [...shadow.querySelectorAll(".tool-button-overflow")];
   const compactActionButtons = [...shadow.querySelectorAll(".floating-menu [data-action]:not(.tool-button-overflow)")];
@@ -4604,6 +4857,7 @@ function initFloatingLauncher() {
     suppressOpacityControlClick: false,
     panelPinned: false,
     activeAction: "",
+    displayPreferences: normalizeFloatingDisplayPreferences(),
     pageDisplayMenuOpen: false,
     moreMenuOpen: false,
     moreMenuTimer: 0,
@@ -4735,14 +4989,239 @@ function initFloatingLauncher() {
     liquidFilter.setAttribute("width", String(width));
     liquidFilter.setAttribute("height", String(height));
   };
+  const createFloatingControlGlass = ({
+    name,
+    target,
+    tint,
+    tintRgb = "255, 255, 255",
+    tintAlpha = 0.045,
+    border,
+    shadow,
+    round = false,
+    menuControl = true,
+    radius = 9
+  }) => {
+    if (!target) return null;
+    const filterId = `model-translator-floating-${name}-liquid-filter-v2`;
+    const mapId = `model-translator-floating-${name}-liquid-map-v2`;
+    const filter = document.createElementNS("http://www.w3.org/2000/svg", "filter");
+    filter.setAttribute("id", filterId);
+    filter.setAttribute("filterUnits", "userSpaceOnUse");
+    filter.setAttribute("colorInterpolationFilters", "sRGB");
+    const image = document.createElementNS("http://www.w3.org/2000/svg", "feImage");
+    image.setAttribute("id", mapId);
+    const displacement = document.createElementNS("http://www.w3.org/2000/svg", "feDisplacementMap");
+    displacement.setAttribute("in", "SourceGraphic");
+    displacement.setAttribute("in2", mapId);
+    displacement.setAttribute("xChannelSelector", "R");
+    displacement.setAttribute("yChannelSelector", "G");
+    filter.append(image, displacement);
+    liquidDefs.appendChild(filter);
+
+    const layer = document.createElement("div");
+    layer.dataset.glassControl = name;
+    layer.style.cssText = `
+      all: initial;
+      position: absolute;
+      width: 0;
+      height: 0;
+      overflow: hidden;
+      border: 1px solid ${border};
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.012) 52%),
+        ${tint};
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.5),
+        inset 0 -1px 0 rgba(51, 65, 85, 0.07),
+        0 3px 8px ${shadow};
+      backdrop-filter:
+        url(#${filterId})
+        blur(0.15px)
+        contrast(1.015)
+        brightness(1.065)
+        saturate(1.05);
+      -webkit-backdrop-filter:
+        url(#${filterId})
+        blur(0.15px)
+        contrast(1.015)
+        brightness(1.065)
+        saturate(1.05);
+      box-sizing: border-box;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      will-change: left, top, width, height, opacity;
+    `;
+    floatingControlGlass.appendChild(layer);
+    return {
+      target,
+      layer,
+      filter,
+      image,
+      displacement,
+      tintRgb,
+      tintAlpha,
+      round,
+      menuControl,
+      radius,
+      mapKey: ""
+    };
+  };
+  const floatingControlGlasses = [
+    createFloatingControlGlass({
+      name: "page-button",
+      target: pageButton,
+      tint: "rgba(64, 158, 255, 0.045)",
+      tintRgb: "64, 158, 255",
+      border: "rgba(100, 179, 255, 0.2)",
+      shadow: "rgba(64, 158, 255, 0.08)"
+    }),
+    createFloatingControlGlass({
+      name: "self-button",
+      target: selfButton,
+      tint: "rgba(39, 163, 92, 0.04)",
+      tintRgb: "39, 163, 92",
+      tintAlpha: 0.04,
+      border: "rgba(74, 184, 121, 0.18)",
+      shadow: "rgba(39, 163, 92, 0.075)"
+    }),
+    createFloatingControlGlass({
+      name: "wordbook-button",
+      target: wordbookButton,
+      tint: "rgba(217, 154, 43, 0.045)",
+      tintRgb: "217, 154, 43",
+      border: "rgba(226, 174, 80, 0.2)",
+      shadow: "rgba(217, 154, 43, 0.075)"
+    }),
+    createFloatingControlGlass({
+      name: "more-button",
+      target: moreToggle,
+      tint: "rgba(255, 255, 255, 0.045)",
+      border: "rgba(255, 255, 255, 0.34)",
+      shadow: "rgba(71, 85, 105, 0.075)"
+    }),
+    createFloatingControlGlass({
+      name: "history-button",
+      target: overflowButtons[0],
+      tint: "rgba(255, 255, 255, 0.045)",
+      border: "rgba(255, 255, 255, 0.34)",
+      shadow: "rgba(71, 85, 105, 0.075)"
+    }),
+    createFloatingControlGlass({
+      name: "usage-button",
+      target: overflowButtons[1],
+      tint: "rgba(255, 255, 255, 0.045)",
+      border: "rgba(255, 255, 255, 0.34)",
+      shadow: "rgba(71, 85, 105, 0.075)"
+    }),
+    createFloatingControlGlass({
+      name: "settings-button",
+      target: overflowButtons[2],
+      tint: "rgba(255, 255, 255, 0.045)",
+      border: "rgba(255, 255, 255, 0.34)",
+      shadow: "rgba(71, 85, 105, 0.075)"
+    })
+  ].filter(Boolean);
+  const buildFloatingControlLiquidGlass = (control, width, height) => {
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    canvas.width = width;
+    canvas.height = height;
+
+    const rawValues = [];
+    const imageData = new Uint8ClampedArray(width * height * 4);
+    let maximumScale = 0;
+
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const centeredX = x / width - 0.5;
+        const centeredY = y / height - 0.5;
+        const distanceToEdge = floatingRoundedRectSdf(centeredX, centeredY, 0.3, 0.2, 0.6);
+        const displacement = smoothFloatingGlassStep(0.8, 0, distanceToEdge - 0.15);
+        const scaled = smoothFloatingGlassStep(0, 1, displacement);
+        const displacementX = (centeredX * scaled + 0.5) * width - x;
+        const displacementY = (centeredY * scaled + 0.5) * height - y;
+        maximumScale = Math.max(maximumScale, Math.abs(displacementX), Math.abs(displacementY));
+        rawValues.push(displacementX, displacementY);
+      }
+    }
+
+    const encodingScale = Math.max(maximumScale * 0.5, 0.001);
+    let rawIndex = 0;
+    for (let index = 0; index < imageData.length; index += 4) {
+      imageData[index] = (rawValues[rawIndex] / encodingScale + 0.5) * 255;
+      imageData[index + 1] = (rawValues[rawIndex + 1] / encodingScale + 0.5) * 255;
+      imageData[index + 2] = 0;
+      imageData[index + 3] = 255;
+      rawIndex += 2;
+    }
+
+    context.putImageData(new ImageData(imageData, width, height), 0, 0);
+    const mapUrl = canvas.toDataURL();
+    control.image.setAttributeNS("http://www.w3.org/1999/xlink", "href", mapUrl);
+    control.image.setAttribute("width", String(width));
+    control.image.setAttribute("height", String(height));
+    control.displacement.setAttribute("scale", String(encodingScale));
+    control.filter.setAttribute("x", "0");
+    control.filter.setAttribute("y", "0");
+    control.filter.setAttribute("width", String(width));
+    control.filter.setAttribute("height", String(height));
+  };
+  const syncFloatingControlLiquidGlass = (menuOpacity) => {
+    floatingControlGlasses.forEach((control) => {
+      const targetStyle = getComputedStyle(control.target);
+      const rect = control.target.getBoundingClientRect();
+      const targetOpacity = Number.parseFloat(targetStyle.opacity);
+      const opacity = (Number.isFinite(targetOpacity) ? targetOpacity : 1) * (control.menuControl ? menuOpacity : 1);
+      if (
+        control.target.hidden ||
+        targetStyle.display === "none" ||
+        targetStyle.visibility === "hidden" ||
+        opacity <= 0.002 ||
+        rect.width < 1 ||
+        rect.height < 1
+      ) {
+        control.layer.style.opacity = "0";
+        control.layer.style.visibility = "hidden";
+        return;
+      }
+
+      const width = Math.max(1, Math.round(rect.width));
+      const height = Math.max(1, Math.round(rect.height));
+      const scale = control.target.offsetWidth ? rect.width / control.target.offsetWidth : 1;
+      control.layer.style.left = `${rect.left}px`;
+      control.layer.style.top = `${rect.top}px`;
+      control.layer.style.width = `${rect.width}px`;
+      control.layer.style.height = `${rect.height}px`;
+      control.layer.style.borderRadius = control.round ? "50%" : `${control.radius * scale}px`;
+      control.layer.style.opacity = String(opacity);
+      control.layer.style.visibility = "visible";
+
+      const mapKey = `${width}x${height}`;
+      if (mapKey !== control.mapKey) {
+        control.mapKey = mapKey;
+        buildFloatingControlLiquidGlass(control, width, height);
+      }
+    });
+  };
   const syncFloatingMenuLiquidGlass = () => {
     if (!floatingGlass.isConnected || !menu.isConnected) return;
+    if (state.displayPreferences.material !== "liquid-glass") {
+      floatingGlass.style.opacity = "0";
+      floatingGlass.style.visibility = "hidden";
+      floatingControlGlasses.forEach((control) => {
+        control.layer.style.opacity = "0";
+        control.layer.style.visibility = "hidden";
+      });
+      return;
+    }
     const menuStyle = getComputedStyle(menu);
     const menuOpacity = Number.parseFloat(menuStyle.opacity) || 0;
     const rect = menu.getBoundingClientRect();
     if (menuOpacity <= 0.002 || rect.width < 1 || rect.height < 1) {
       floatingGlass.style.opacity = "0";
       floatingGlass.style.visibility = "hidden";
+      syncFloatingControlLiquidGlass(0);
       return;
     }
 
@@ -4756,6 +5235,7 @@ function initFloatingLauncher() {
     floatingGlass.style.borderRadius = `${9 * scale}px`;
     floatingGlass.style.opacity = String(menuOpacity);
     floatingGlass.style.visibility = "visible";
+    syncFloatingControlLiquidGlass(menuOpacity);
 
     const mapKey = `${width}x${height}`;
     if (mapKey !== floatingGlassMapKey) {
@@ -4781,13 +5261,74 @@ function initFloatingLauncher() {
     };
     state.menuLiquidMapFrame = window.requestAnimationFrame(update);
   };
+  const applyFloatingDisplayPreferences = (value) => {
+    const preferences = normalizeFloatingDisplayPreferences(value);
+    const density = preferences.glassDensity / 100;
+    state.displayPreferences = preferences;
+    const interpolate = (minimum, maximum) => String(minimum + (maximum - minimum) * density);
+    menu.dataset.material = preferences.material;
+    panel.dataset.material = "acrylic";
+
+    menu.style.setProperty("--menu-glass-highlight-alpha", "0.28");
+    menu.style.setProperty("--menu-glass-highlight-tail-alpha", "0.035");
+    menu.style.setProperty("--menu-glass-base-alpha", "0.12");
+    menu.style.setProperty("--menu-glass-tint-alpha", "0.1");
+    menu.style.setProperty("--menu-glass-border-alpha", "0.34");
+    menu.style.setProperty("--menu-glass-shadow-alpha", "0.13");
+    menu.style.setProperty("--menu-glass-hover-base-alpha", "0.2");
+    menu.style.setProperty("--menu-glass-hover-tint-alpha", "0.16");
+    menu.style.setProperty("--menu-glass-hover-border-alpha", "0.48");
+    menu.style.setProperty("--menu-glass-hover-shadow-alpha", "0.19");
+    menu.style.setProperty("--menu-white-glass-top-alpha", "0.3");
+    menu.style.setProperty("--menu-white-glass-tail-alpha", "0.065");
+    menu.style.setProperty("--menu-white-glass-border-alpha", "0.56");
+    menu.style.setProperty("--menu-white-glass-shadow-alpha", "0.12");
+    menu.style.setProperty("--menu-white-glass-hover-top-alpha", "0.42");
+    menu.style.setProperty("--menu-white-glass-hover-tail-alpha", "0.1");
+    menu.style.setProperty("--menu-white-glass-hover-border-alpha", "0.78");
+    menu.style.setProperty("--menu-white-glass-hover-shadow-alpha", "0.16");
+
+    floatingGlass.style.borderColor = `rgba(255, 255, 255, ${interpolate(0.42, 0.78)})`;
+    floatingGlass.style.background = `
+      linear-gradient(
+        145deg,
+        rgba(255, 255, 255, ${interpolate(0.055, 0.72)}),
+        rgba(255, 255, 255, ${interpolate(0.01, 0.5)}) 54%,
+        rgba(184, 220, 255, ${interpolate(0.035, 0.18)})
+      ),
+      rgba(248, 251, 255, ${interpolate(0.018, 0.78)})
+    `;
+    floatingGlass.style.boxShadow = `
+      0 10px 24px rgba(15, 23, 42, ${interpolate(0.11, 0.16)}),
+      inset 0 1px 0 rgba(255, 255, 255, ${interpolate(0.62, 0.88)}),
+      inset 1px 0 0 rgba(255, 255, 255, ${interpolate(0.18, 0.46)}),
+      inset 0 -1px 0 rgba(30, 64, 96, ${interpolate(0.11, 0.16)})
+    `;
+    floatingControlGlasses.forEach((control) => {
+      control.layer.style.background = `
+        linear-gradient(
+          145deg,
+          rgba(255, 255, 255, 0.12),
+          rgba(255, 255, 255, 0.012) 52%
+        ),
+        rgba(${control.tintRgb}, ${control.tintAlpha})
+      `;
+    });
+    scheduleFloatingMenuLiquidGlass(220);
+    return preferences;
+  };
+  chrome.storage.local.get({
+    [FLOATING_DISPLAY_PREFERENCES_KEY]: FLOATING_DISPLAY_DEFAULTS
+  }).then((stored) => {
+    if (!host.isConnected || contentLifecycleSignal.aborted) return;
+    applyFloatingDisplayPreferences(stored[FLOATING_DISPLAY_PREFERENCES_KEY]);
+  }).catch(() => applyFloatingDisplayPreferences(FLOATING_DISPLAY_DEFAULTS));
   menu.addEventListener("transitionrun", () => scheduleFloatingMenuLiquidGlass());
   menu.addEventListener("transitionend", () => scheduleFloatingMenuLiquidGlass(80));
   cluster.addEventListener("pointerenter", () => scheduleFloatingMenuLiquidGlass(700));
   cluster.addEventListener("pointerleave", () => scheduleFloatingMenuLiquidGlass(420));
   wrapper.addEventListener("focusin", () => scheduleFloatingMenuLiquidGlass(700));
   wrapper.addEventListener("focusout", () => scheduleFloatingMenuLiquidGlass(420));
-
   const releaseMoreHoverSuppression = () => {
     if (state.moreHoverResetTimer) window.clearTimeout(state.moreHoverResetTimer);
     state.moreHoverResetTimer = 0;
@@ -4898,6 +5439,7 @@ function initFloatingLauncher() {
     }
     closePanelOpacityControl();
     resetPanelPin();
+    scheduleFloatingMenuLiquidGlass(180);
   };
   const configurePanelControls = async (action) => {
     const opacityEnabled = supportsOpacityControls(action);
@@ -4919,6 +5461,7 @@ function initFloatingLauncher() {
       state.y = position.y;
     }
     applyFloatingPosition(wrapper, panel, state);
+    scheduleFloatingMenuLiquidGlass(220);
     updateFloatingPageButton(menu, state);
   });
   updateFloatingSelectionMode();
@@ -5067,11 +5610,13 @@ function initFloatingLauncher() {
     state.panelManualOffsetX = left - state.x;
     state.panelManualOffsetY = top - state.y;
     applyFloatingPosition(wrapper, panel, state);
+    scheduleFloatingMenuLiquidGlass(140);
   });
 
   const finishPanelDrag = () => {
     state.panelDragging = false;
     panelHead.classList.remove("is-dragging");
+    scheduleFloatingMenuLiquidGlass(180);
   };
   panelHead.addEventListener("pointerup", finishPanelDrag);
   panelHead.addEventListener("lostpointercapture", finishPanelDrag);
@@ -5281,8 +5826,15 @@ function initFloatingLauncher() {
     panel.hidden = false;
     menu.classList.add("is-pinned");
     configurePanelControls(action);
-    renderFloatingPanel(action, { title, status, body, panel });
+    renderFloatingPanel(action, {
+      title,
+      status,
+      body,
+      panel,
+      applyDisplayPreferences: applyFloatingDisplayPreferences
+    });
     applyFloatingPosition(wrapper, panel, state);
+    scheduleFloatingMenuLiquidGlass(320);
   });
 }
 
@@ -5583,31 +6135,131 @@ function sortWordBookEntries(words, sort) {
   });
 }
 
-async function renderFloatingSettings({ title, status, body }) {
-  title.textContent = "AI 配置";
+async function renderFloatingSettings({ title, status, body, applyDisplayPreferences }) {
+  title.textContent = "设置";
   body.innerHTML = `
-    <label class="field">Base URL<input id="floatingBaseUrl" type="url" /></label>
-    <label class="field api-key-field">API Key<input id="floatingApiKey" type="password" autocomplete="off" /><span class="api-key-tip">已保存的密钥不会显示；留空不会修改。</span></label>
-    <label class="field">模型名称<input id="floatingModel" type="text" /></label>
-    <button class="primary" id="floatingSaveSettings" type="button">保存并测试</button>
+    <div class="settings-tabs" role="tablist" aria-label="设置类型">
+      <button class="is-selected" type="button" role="tab" data-settings-tab="ai" aria-selected="true">AI 配置</button>
+      <button type="button" role="tab" data-settings-tab="appearance" aria-selected="false">显示效果</button>
+    </div>
+    <section class="settings-view" data-settings-view="ai">
+      <label class="field">Base URL<input id="floatingBaseUrl" type="url" /></label>
+      <label class="field api-key-field">API Key<input id="floatingApiKey" type="password" autocomplete="off" /><span class="api-key-tip">已保存的密钥不会显示；留空不会修改。</span></label>
+      <label class="field">模型名称<input id="floatingModel" type="text" /></label>
+      <button class="primary" id="floatingSaveSettings" type="button">保存并测试</button>
+    </section>
+    <section class="settings-view" data-settings-view="appearance" hidden>
+      <div class="appearance-card">
+        <div class="appearance-card-head">
+          <strong>随身译显示材质</strong>
+        </div>
+        <div class="appearance-material-options" role="radiogroup" aria-label="显示材质">
+          <button type="button" role="radio" data-appearance-material="liquid-glass">Liquid Glass</button>
+          <button type="button" role="radio" data-appearance-material="acrylic">亚克力</button>
+        </div>
+        <label class="appearance-tone-control">
+          <span class="appearance-tone-head">玻璃不透明度</span>
+          <input class="appearance-tone-range" type="range" min="0" max="100" step="1" value="0" aria-label="Liquid Glass 不透明度" />
+        </label>
+      </div>
+    </section>
   `;
 
-  const response = await chrome.runtime.sendMessage({ type: "get-settings-meta" });
-  if (!response?.ok) throw new Error(response?.error || "读取模型配置失败");
-  const settings = { ...DEFAULT_SETTINGS, ...response };
-  body.querySelector("#floatingBaseUrl").value = settings.baseUrl || "";
+  const settingsTabs = [...body.querySelectorAll("[data-settings-tab]")];
+  const settingsViews = [...body.querySelectorAll("[data-settings-view]")];
+  const materialButtons = [...body.querySelectorAll("[data-appearance-material]")];
+  const toneControl = body.querySelector(".appearance-tone-control");
+  const toneRange = body.querySelector(".appearance-tone-range");
+  const baseUrlInput = body.querySelector("#floatingBaseUrl");
   const apiKeyInput = body.querySelector("#floatingApiKey");
-  apiKeyInput.value = "";
-  apiKeyInput.placeholder = settings.hasApiKey ? "已保存，留空不修改" : "sk-...";
-  body.querySelector("#floatingModel").value = settings.model || "";
+  const modelInput = body.querySelector("#floatingModel");
+  let displayPreferences = normalizeFloatingDisplayPreferences();
+  let displaySaveTimer = 0;
+
+  const selectSettingsView = (name) => {
+    settingsTabs.forEach((tab) => {
+      const selected = tab.dataset.settingsTab === name;
+      tab.classList.toggle("is-selected", selected);
+      tab.setAttribute("aria-selected", String(selected));
+    });
+    settingsViews.forEach((view) => {
+      view.hidden = view.dataset.settingsView !== name;
+    });
+  };
+  settingsTabs.forEach((tab) => {
+    tab.addEventListener("click", () => selectSettingsView(tab.dataset.settingsTab));
+  });
+
+  const persistDisplayPreferences = (immediate = false) => {
+    window.clearTimeout(displaySaveTimer);
+    const save = () => {
+      displaySaveTimer = 0;
+      chrome.storage.local.set({
+        [FLOATING_DISPLAY_PREFERENCES_KEY]: displayPreferences
+      }).catch((error) => setFloatingStatus(status, error.message || "显示效果保存失败", true));
+    };
+    if (immediate) save();
+    else displaySaveTimer = window.setTimeout(save, 120);
+  };
+  const applyAppearance = (immediate = false) => {
+    displayPreferences = normalizeFloatingDisplayPreferences(displayPreferences);
+    applyDisplayPreferences?.(displayPreferences);
+    persistDisplayPreferences(immediate);
+  };
+  const renderAppearanceEditor = () => {
+    materialButtons.forEach((button) => {
+      const selected = button.dataset.appearanceMaterial === displayPreferences.material;
+      button.classList.toggle("is-selected", selected);
+      button.setAttribute("aria-checked", String(selected));
+    });
+    toneControl.hidden = displayPreferences.material !== "liquid-glass";
+    toneRange.value = String(displayPreferences.glassDensity);
+  };
+  materialButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      displayPreferences.material = button.dataset.appearanceMaterial;
+      renderAppearanceEditor();
+      applyAppearance(true);
+    });
+  });
+  toneRange.addEventListener("input", () => {
+    displayPreferences.glassDensity = Number(toneRange.value);
+    applyAppearance();
+  });
+  toneRange.addEventListener("change", () => applyAppearance(true));
+
+  chrome.storage.local.get({
+    [FLOATING_DISPLAY_PREFERENCES_KEY]: FLOATING_DISPLAY_DEFAULTS
+  }).then((stored) => {
+    if (!body.isConnected) return;
+    displayPreferences = normalizeFloatingDisplayPreferences(stored[FLOATING_DISPLAY_PREFERENCES_KEY]);
+    renderAppearanceEditor();
+    applyDisplayPreferences?.(displayPreferences);
+  }).catch((error) => {
+    setFloatingStatus(status, error.message || "读取显示效果失败", true);
+  });
+  renderAppearanceEditor();
+
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "get-settings-meta" });
+    if (!response?.ok) throw new Error(response?.error || "读取模型配置失败");
+    if (!body.isConnected) return;
+    const settings = { ...DEFAULT_SETTINGS, ...response };
+    baseUrlInput.value = settings.baseUrl || "";
+    apiKeyInput.value = "";
+    apiKeyInput.placeholder = settings.hasApiKey ? "已保存，留空不修改" : "sk-...";
+    modelInput.value = settings.model || "";
+  } catch (error) {
+    setFloatingStatus(status, error.message || String(error), true);
+  }
 
   body.querySelector("#floatingSaveSettings").addEventListener("click", async (event) => {
     const button = event.currentTarget;
     const next = {
       ...DEFAULT_SETTINGS,
-      baseUrl: body.querySelector("#floatingBaseUrl").value.trim(),
-      apiKey: body.querySelector("#floatingApiKey").value.trim(),
-      model: body.querySelector("#floatingModel").value.trim(),
+      baseUrl: baseUrlInput.value.trim(),
+      apiKey: apiKeyInput.value.trim(),
+      model: modelInput.value.trim(),
       targetLanguage: "中文"
     };
     button.disabled = true;
