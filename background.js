@@ -1,3 +1,5 @@
+importScripts("languages.js");
+
 const DEFAULT_SETTINGS = {
   baseUrl: "https://api.openai.com/v1/chat/completions",
   apiKey: "",
@@ -11,6 +13,8 @@ const TOKEN_TOTALS_KEY = "tokenUsageTotals";
 const WORD_CACHE_KEY = "englishWordCache";
 const WORD_BOOK_KEY = "englishWordBook";
 const PAGE_PERSISTENT_CACHE_KEY = "pageTranslationPersistentCacheV2";
+const LOCAL_API_KEY = "modelApiKey";
+const SYNC_SETTING_KEYS = ["baseUrl", "model", "targetLanguage", "temperature"];
 const HISTORY_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_HISTORY_ITEMS = 300;
 const MAX_TOKEN_EVENTS = 1000;
@@ -21,14 +25,29 @@ const MAX_PAGE_HISTORY_TEXT = 12000;
 const PAGE_PERSISTENT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const PAGE_PERSISTENT_CACHE_MAX = 1200;
 const MODEL_REQUEST_TIMEOUT_MS = 45000;
+const LOCAL_STORAGE_SOFT_LIMIT = 8 * 1024 * 1024;
+const HISTORY_BYTE_BUDGET = 2 * 1024 * 1024;
+const WORD_CACHE_BYTE_BUDGET = 2 * 1024 * 1024;
+const WORD_BOOK_BYTE_BUDGET = 1536 * 1024;
+const PAGE_CACHE_BYTE_BUDGET = 2 * 1024 * 1024;
+const TOKEN_EVENTS_BYTE_BUDGET = 512 * 1024;
+const SOURCE_LANGUAGE_VALUES = new Set(globalThis.AI_XIAOYI_LANGUAGES.source.map(([value]) => value));
+const TARGET_LANGUAGE_VALUES = new Set(globalThis.AI_XIAOYI_LANGUAGES.target.map(([value]) => value));
 const activeRequests = new Map();
 let historyStorageQueue = Promise.resolve();
 let tokenStorageQueue = Promise.resolve();
 let pageCacheStorageQueue = Promise.resolve();
+let boundedStorageQueue = Promise.resolve();
+let settingsMigrationPromise = null;
+
+chrome.storage.sync.setAccessLevel?.({ accessLevel: "TRUSTED_CONTEXTS" })?.catch(() => {});
+void migrateSettingsStorage().catch((error) => {
+  console.warn("[AI小译] 模型配置迁移暂未完成：", error);
+});
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "translate-text") {
-    translateText(message.text, message.mode, sender)
+    translateText(message.text, message.mode, sender, message.targetLanguage)
       .then((translation) => sendResponse({ ok: true, translation }))
       .catch((error) => sendResponse({ ok: false, error: friendlyErrorMessage(error) }));
     return true;
@@ -105,12 +124,40 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === "get-popup-settings") {
+    if (!isTrustedExtensionPage(sender)) {
+      sendResponse({ ok: false, error: "当前页面无权读取完整模型配置。" });
+      return;
+    }
+    getSettings()
+      .then((settings) => sendResponse({ ok: true, settings }))
+      .catch((error) => sendResponse({ ok: false, error: friendlyErrorMessage(error) }));
+    return true;
+  }
+
+  if (message?.type === "save-settings") {
+    saveSettings(message.settings, { preserveApiKey: message.preserveApiKey === true })
+      .then((settings) => sendResponse({
+        ok: true,
+        settings: {
+          baseUrl: settings.baseUrl,
+          model: settings.model,
+          targetLanguage: settings.targetLanguage,
+          hasApiKey: Boolean(settings.apiKey)
+        }
+      }))
+      .catch((error) => sendResponse({ ok: false, error: friendlyErrorMessage(error) }));
+    return true;
+  }
+
   if (message?.type === "get-settings-meta") {
     getSettings()
       .then((settings) => sendResponse({
         ok: true,
+        baseUrl: settings.baseUrl || "",
         model: settings.model || "",
-        targetLanguage: settings.targetLanguage || "中文"
+        targetLanguage: settings.targetLanguage || "中文",
+        hasApiKey: Boolean(settings.apiKey)
       }))
       .catch((error) => sendResponse({ ok: false, error: friendlyErrorMessage(error) }));
     return true;
@@ -161,36 +208,98 @@ function notifyAssistantTranslationBusy(tabId, requestId, busy) {
   }).catch(() => {});
 }
 
-async function getSettings() {
-  const stored = await chrome.storage.sync.get(DEFAULT_SETTINGS);
-  return { ...DEFAULT_SETTINGS, ...stored };
+function isTrustedExtensionPage(sender) {
+  const extensionRoot = chrome.runtime.getURL("");
+  return !sender?.tab && typeof sender?.url === "string" && sender.url.startsWith(extensionRoot);
 }
 
-async function translateText(text, mode = "selection", sender) {
+function migrateSettingsStorage() {
+  if (settingsMigrationPromise) return settingsMigrationPromise;
+  settingsMigrationPromise = (async () => {
+    const [synced, local] = await Promise.all([
+      chrome.storage.sync.get([...SYNC_SETTING_KEYS, "apiKey"]),
+      chrome.storage.local.get(LOCAL_API_KEY)
+    ]);
+    const hasLocalKey = Object.prototype.hasOwnProperty.call(local, LOCAL_API_KEY) && typeof local[LOCAL_API_KEY] === "string";
+    const legacyApiKey = typeof synced.apiKey === "string" ? synced.apiKey.trim() : "";
+    if (!hasLocalKey && legacyApiKey) {
+      await chrome.storage.local.set({ [LOCAL_API_KEY]: legacyApiKey });
+    }
+    if (Object.prototype.hasOwnProperty.call(synced, "apiKey")) {
+      await chrome.storage.sync.remove("apiKey");
+    }
+  })().catch((error) => {
+    settingsMigrationPromise = null;
+    throw error;
+  });
+  return settingsMigrationPromise;
+}
+
+async function getSettings() {
+  await migrateSettingsStorage();
+  const [synced, local] = await Promise.all([
+    chrome.storage.sync.get(SYNC_SETTING_KEYS),
+    chrome.storage.local.get({ [LOCAL_API_KEY]: "" })
+  ]);
+  return {
+    ...DEFAULT_SETTINGS,
+    ...synced,
+    apiKey: typeof local[LOCAL_API_KEY] === "string" ? local[LOCAL_API_KEY] : ""
+  };
+}
+
+async function saveSettings(settings, options = {}) {
+  const current = await getSettings();
+  const incomingApiKey = typeof settings?.apiKey === "string" ? settings.apiKey.trim() : "";
+  const next = {
+    ...DEFAULT_SETTINGS,
+    ...current,
+    ...settings,
+    apiKey: options.preserveApiKey && !incomingApiKey ? current.apiKey : incomingApiKey
+  };
+  validateSettings(next);
+  await chrome.storage.local.set({ [LOCAL_API_KEY]: next.apiKey });
+  await chrome.storage.sync.set(Object.fromEntries(SYNC_SETTING_KEYS.map((key) => [key, next[key]])));
+  await chrome.storage.sync.remove("apiKey");
+  return next;
+}
+
+async function translateText(text, mode = "selection", sender, requestedTargetLanguage = "") {
   const settings = await getSettings();
   validateSettings(settings);
+
+  const targetLanguage = mode === "selection"
+    ? normalizeAutoTargetLanguage(String(requestedTargetLanguage || settings.targetLanguage || "中文").trim())
+    : settings.targetLanguage;
+  validateLanguage(targetLanguage, TARGET_LANGUAGE_VALUES, "目标语言");
+
+  const selectionInstruction = targetLanguage === "自动（中英互译）"
+    ? "If the selected text is primarily Chinese, translate it into English. If it is primarily English, translate it into Chinese. For mixed text, choose the most useful Chinese-English direction. Return only the translation."
+    : `Translate the following selected text into ${targetLanguage}. Return only the translation.`;
 
   const prompt =
     mode === "page"
       ? `Translate the following webpage text into ${settings.targetLanguage}. Keep meaning, names, numbers, and formatting intent. Return only the translation.`
-      : `Translate the following selected text into ${settings.targetLanguage}. Return only the translation.`;
+      : selectionInstruction;
 
   const result = await callChatCompletions(settings, [
     { role: "system", content: prompt },
     { role: "user", content: text }
   ]);
 
-  await recordTokenUsage(result.usage, { mode, model: result.model });
-  await addHistoryItem({
-    mode,
-    source: text,
-    translation: result.content,
-    url: sender?.tab?.url || "",
-    title: sender?.tab?.title || "",
-    model: result.model,
-    sourceLanguage: "自动识别",
-    targetLanguage: settings.targetLanguage
-  });
+  await runNonCriticalStorageTasks(
+    ["Token 用量", () => recordTokenUsage(result.usage, { mode, model: result.model })],
+    ["翻译历史", () => addHistoryItem({
+      mode,
+      source: text,
+      translation: result.content,
+      url: sender?.tab?.url || "",
+      title: sender?.tab?.title || "",
+      model: result.model,
+      sourceLanguage: "自动识别",
+      targetLanguage
+    })]
+  );
 
   return result.content;
 }
@@ -200,8 +309,10 @@ async function translateSelfText(message, sender) {
   validateSettings(settings);
 
   const text = message.text?.trim();
-  const sourceLanguage = message.sourceLanguage?.trim() || "自动识别";
-  const targetLanguage = normalizeAutoTargetLanguage(message.targetLanguage?.trim() || "自动（中英互译）");
+  const sourceLanguage = String(message.sourceLanguage || "").trim();
+  const targetLanguage = normalizeAutoTargetLanguage(String(message.targetLanguage || "").trim());
+  validateLanguage(sourceLanguage, SOURCE_LANGUAGE_VALUES, "原语言");
+  validateLanguage(targetLanguage, TARGET_LANGUAGE_VALUES, "目标语言");
 
   if (!text) {
     throw new Error("请输入要翻译的内容。");
@@ -227,17 +338,19 @@ async function translateSelfText(message, sender) {
     { role: "user", content: text }
   ]);
 
-  await recordTokenUsage(result.usage, { mode: "self", model: result.model });
-  await addHistoryItem({
-    mode: "self",
-    source: text,
-    translation: result.content,
-    url: sender?.tab?.url || "",
-    title: sender?.tab?.title || "",
-    model: result.model,
-    sourceLanguage,
-    targetLanguage
-  });
+  await runNonCriticalStorageTasks(
+    ["Token 用量", () => recordTokenUsage(result.usage, { mode: "self", model: result.model })],
+    ["翻译历史", () => addHistoryItem({
+      mode: "self",
+      source: text,
+      translation: result.content,
+      url: sender?.tab?.url || "",
+      title: sender?.tab?.title || "",
+      model: result.model,
+      sourceLanguage,
+      targetLanguage
+    })]
+  );
 
   return result.content;
 }
@@ -250,8 +363,15 @@ async function lookupEnglishWord(message) {
   }
 
   const key = normalizeWordKey(word);
+  const cacheKey = getWordCacheKey(key, sentence);
   const stored = await chrome.storage.local.get({ [WORD_CACHE_KEY]: {}, [WORD_BOOK_KEY]: [] });
-  const cached = stored[WORD_CACHE_KEY]?.[key];
+  const cache = stored[WORD_CACHE_KEY] || {};
+  const legacyCached = cache[key];
+  const cached = cache[cacheKey] || (
+    legacyCached && normalizeWordContext(legacyCached.context) === normalizeWordContext(sentence)
+      ? legacyCached
+      : null
+  );
   const wordBook = stored[WORD_BOOK_KEY] || [];
   if (cached && Date.now() - Number(cached.updatedAt || 0) <= WORD_CACHE_TTL_MS) {
     return { ...cached, favorite: isWordFavorite(wordBook, cached, key) };
@@ -260,17 +380,21 @@ async function lookupEnglishWord(message) {
   const settings = await getSettings();
   validateSettings(settings);
   const result = await callWordDictionary(settings, word, sentence);
-  await recordTokenUsage(result.usage, { mode: "word", model: result.model });
+  await runNonCriticalStorageTasks(
+    ["Token 用量", () => recordTokenUsage(result.usage, { mode: "word", model: result.model })]
+  );
 
   const parsed = parseWordJson(result.content);
   if (!parsed) {
     throw new Error("模型没有给出单词资料。它返回了思考草稿而不是最终结果，请重试一次；若持续出现，请换用不输出思考过程的模型。");
   }
   const entry = normalizeWordEntry(parsed, word, sentence);
-  const cache = pruneWordCache(stored[WORD_CACHE_KEY] || {});
-  cache[key] = { ...entry, key, updatedAt: Date.now() };
-  await chrome.storage.local.set({ [WORD_CACHE_KEY]: trimWordCache(cache) });
-  return { ...cache[key], favorite: isWordFavorite(wordBook, cache[key], key) };
+  const nextCache = pruneWordCache(cache);
+  nextCache[cacheKey] = { ...entry, key, updatedAt: Date.now() };
+  await runNonCriticalStorageTasks(
+    ["单词缓存", () => writeBoundedWordCache(nextCache)]
+  );
+  return { ...nextCache[cacheKey], favorite: isWordFavorite(wordBook, nextCache[cacheKey], key) };
 }
 
 async function callWordDictionary(settings, word, sentence) {
@@ -351,11 +475,11 @@ async function toggleWordFavorite(rawEntry) {
   const index = words.findIndex((item) => item.key === key);
   if (index >= 0) {
     words.splice(index, 1);
-    await chrome.storage.local.set({ [WORD_BOOK_KEY]: words });
+    await writeBoundedWordBook(words);
     return false;
   }
   const entry = { ...normalizeWordEntry(rawEntry, rawEntry?.word || key, rawEntry?.context || ""), key, savedAt: Date.now() };
-  await chrome.storage.local.set({ [WORD_BOOK_KEY]: [entry, ...words].slice(0, MAX_WORD_BOOK_ITEMS) });
+  await writeBoundedWordBook([entry, ...words].slice(0, MAX_WORD_BOOK_ITEMS));
   return true;
 }
 
@@ -366,7 +490,7 @@ async function getWordBook() {
 
 async function removeWordBookEntry(key) {
   const stored = await chrome.storage.local.get({ [WORD_BOOK_KEY]: [] });
-  await chrome.storage.local.set({ [WORD_BOOK_KEY]: (stored[WORD_BOOK_KEY] || []).filter((item) => item.key !== key) });
+  await writeBoundedWordBook((stored[WORD_BOOK_KEY] || []).filter((item) => item.key !== key));
 }
 
 async function clearWordBook() {
@@ -375,6 +499,24 @@ async function clearWordBook() {
 
 function normalizeWordKey(word) {
   return String(word || "").trim().toLowerCase().replace(/^[^a-z]+|[^a-z]+$/g, "");
+}
+
+function normalizeWordContext(sentence) {
+  return String(sentence || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function getWordCacheKey(word, sentence) {
+  const context = normalizeWordContext(sentence);
+  return `${normalizeWordKey(word)}::${hashStorageKey(context || "no-context")}`;
+}
+
+function hashStorageKey(value) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
 }
 
 function isWordFavorite(words, entry, fallbackKey) {
@@ -392,12 +534,28 @@ function trimWordCache(cache) {
   return Object.fromEntries(entries.slice(0, MAX_WORD_CACHE_ITEMS));
 }
 
+function writeBoundedWordCache(cache) {
+  const entries = Object.entries(trimWordCache(cache))
+    .sort(([, a], [, b]) => Number(b?.updatedAt || 0) - Number(a?.updatedAt || 0));
+  return writeBoundedObject(WORD_CACHE_KEY, entries, WORD_CACHE_BYTE_BUDGET);
+}
+
+function writeBoundedWordBook(words) {
+  return writeBoundedArray(WORD_BOOK_KEY, words, WORD_BOOK_BYTE_BUDGET);
+}
+
 function normalizeAutoTargetLanguage(language) {
   return language === "自动识别（中英互译）" ? "自动（中英互译）" : language;
 }
 
 async function testConnection(settings) {
-  const mergedSettings = { ...DEFAULT_SETTINGS, ...settings, targetLanguage: "中文" };
+  const storedSettings = await getSettings();
+  const mergedSettings = {
+    ...storedSettings,
+    ...settings,
+    apiKey: settings?.apiKey?.trim() || storedSettings.apiKey,
+    targetLanguage: "中文"
+  };
   validateSettings(mergedSettings);
 
   const result = await callChatCompletions(
@@ -409,11 +567,13 @@ async function testConnection(settings) {
       },
       { role: "user", content: "Ping" }
     ],
-    { maxTokens: 8, allowEmptyContent: true }
+    { maxTokens: 8 }
   );
-  await recordTokenUsage(result.usage, { mode: "test", model: result.model });
+  await runNonCriticalStorageTasks(
+    ["Token 用量", () => recordTokenUsage(result.usage, { mode: "test", model: result.model })]
+  );
 
-  return result.content || "OK";
+  return result.content;
 }
 
 async function translateBatch(items, sender, requestId, batchId) {
@@ -441,32 +601,35 @@ async function translateBatch(items, sender, requestId, batchId) {
     { requestId }
   );
   const stableBatchId = String(batchId || `${requestId || "page"}:${payload.map((item) => item.id).join(",")}`);
-  await recordTokenUsage(result.usage, {
-    mode: "page",
-    model: result.model,
-    eventId: `${requestId || "page"}:${stableBatchId}`
-  });
+  await runNonCriticalStorageTasks(
+    ["Token 用量", () => recordTokenUsage(result.usage, {
+      mode: "page",
+      model: result.model,
+      eventId: `${requestId || "page"}:${stableBatchId}`
+    })]
+  );
 
   const parsed = parseJsonArray(result.content);
-  const byId = new Map(parsed.map((item) => [String(item.id), item.translation || ""]));
-  const translatedItems = payload.map((item) => ({
-    id: item.id,
-    translation: byId.get(String(item.id)) || item.text
-  }));
+  const translatedItems = validateBatchTranslations(parsed, payload);
 
-  await upsertPageHistoryItem({
-    mode: "page",
-    pageRequestId: String(requestId || ""),
-    batchId: stableBatchId,
-    source: payload.map((item) => item.text).join("\n"),
-    translation: translatedItems.map((item) => item.translation).join("\n"),
-    url: sender?.tab?.url || "",
-    title: sender?.tab?.title || "",
-    model: result.model,
-    sourceLanguage: "自动识别",
-    targetLanguage: settings.targetLanguage,
-    count: translatedItems.length
-  });
+  if (translatedItems.length) {
+    const translatedIds = new Set(translatedItems.map((item) => String(item.id)));
+    await runNonCriticalStorageTasks(
+      ["翻译历史", () => upsertPageHistoryItem({
+        mode: "page",
+        pageRequestId: String(requestId || ""),
+        batchId: stableBatchId,
+        source: payload.filter((item) => translatedIds.has(String(item.id))).map((item) => item.text).join("\n"),
+        translation: translatedItems.map((item) => item.translation).join("\n"),
+        url: sender?.tab?.url || "",
+        title: sender?.tab?.title || "",
+        model: result.model,
+        sourceLanguage: "自动识别",
+        targetLanguage: settings.targetLanguage,
+        count: translatedItems.length
+      })]
+    );
+  }
 
   return translatedItems;
 }
@@ -492,6 +655,7 @@ async function callChatCompletions(settings, messages, options = {}) {
   try {
     response = await fetch(endpoint, {
       method: "POST",
+      redirect: "error",
       signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
@@ -544,15 +708,6 @@ async function callChatCompletions(settings, messages, options = {}) {
   }
 
   const content = extractMessageContent(data);
-  if (!content && options.allowEmptyContent) {
-    return {
-      content: "",
-      usage: normalizeUsage(data?.usage),
-      model: data?.model || model,
-      endpoint
-    };
-  }
-
   if (!content) {
     throw new Error(`模型响应里没有可用的翻译内容。响应摘要：${summarizeResponse(data)}`);
   }
@@ -649,12 +804,25 @@ function summarizeResponse(data) {
 
 function normalizeChatCompletionsUrl(rawUrl) {
   const trimmed = rawUrl.trim();
+  const hasScheme = /^[a-z][a-z\d+.-]*:\/\//i.test(trimmed);
+  if (hasScheme && !/^https?:\/\//i.test(trimmed)) {
+    throw new Error("Base URL 仅支持 HTTPS；本机模型可使用 localhost 的 HTTP 地址。");
+  }
   const value = (/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`).replace(/\/+$/, "");
   let url;
   try {
     url = new URL(value);
   } catch {
     throw new Error("Base URL 格式不正确，请填写类似 https://api.deepseek.com 的地址。");
+  }
+  if (url.username || url.password) {
+    throw new Error("Base URL 不能包含用户名或密码。");
+  }
+  if (url.protocol === "http:" && !isLoopbackHostname(url.hostname)) {
+    throw new Error("远程模型接口仅允许使用 HTTPS；HTTP 只允许 localhost、127.0.0.1 或 [::1] 本机地址。");
+  }
+  if (!["http:", "https:"].includes(url.protocol)) {
+    throw new Error("Base URL 仅支持 HTTPS；本机模型可使用 localhost 的 HTTP 地址。");
   }
   const path = url.pathname.replace(/\/+$/, "");
 
@@ -674,6 +842,17 @@ function normalizeChatCompletionsUrl(rawUrl) {
   return url.toString();
 }
 
+function isLoopbackHostname(hostname) {
+  const normalized = String(hostname || "").toLowerCase();
+  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "[::1]" || normalized === "::1";
+}
+
+function validateLanguage(language, allowed, label) {
+  if (!allowed.has(language)) {
+    throw new Error(`${label}“${language || "空值"}”不受支持，请重新选择。`);
+  }
+}
+
 function validateSettings(settings) {
   if (!settings.apiKey?.trim()) {
     throw new Error("请先在插件小窗中填写 API Key。");
@@ -681,9 +860,11 @@ function validateSettings(settings) {
   if (!settings.baseUrl?.trim()) {
     throw new Error("请先填写模型接口地址。");
   }
+  normalizeChatCompletionsUrl(settings.baseUrl);
   if (!settings.model?.trim()) {
     throw new Error("请先填写模型名称。");
   }
+  validateLanguage(settings.targetLanguage || "中文", TARGET_LANGUAGE_VALUES, "目标语言");
 }
 
 function friendlyErrorMessage(error) {
@@ -783,7 +964,9 @@ function persistPageTranslationCacheEntries(entries) {
       .slice(PAGE_PERSISTENT_CACHE_MAX)
       .forEach(([key]) => delete cache[key]);
 
-    await chrome.storage.local.set({ [PAGE_PERSISTENT_CACHE_KEY]: cache });
+    const entriesByNewest = Object.entries(cache)
+      .sort(([, a], [, b]) => Number(b?.createdAt || 0) - Number(a?.createdAt || 0));
+    await writeBoundedObject(PAGE_PERSISTENT_CACHE_KEY, entriesByNewest, PAGE_CACHE_BYTE_BUDGET);
   });
 }
 
@@ -800,7 +983,7 @@ function addHistoryItem(item) {
       ...pruneHistory(stored[HISTORY_KEY] || [])
     ].slice(0, MAX_HISTORY_ITEMS);
 
-    await chrome.storage.local.set({ [HISTORY_KEY]: next });
+    await writeBoundedArray(HISTORY_KEY, next, HISTORY_BYTE_BUDGET);
   });
 }
 
@@ -830,7 +1013,7 @@ function upsertPageHistoryItem(item) {
       completedBatchIds: Array.from(completedBatchIds).slice(-200)
     };
     const next = [nextItem, ...history].slice(0, MAX_HISTORY_ITEMS);
-    await chrome.storage.local.set({ [HISTORY_KEY]: next });
+    await writeBoundedArray(HISTORY_KEY, next, HISTORY_BYTE_BUDGET);
   });
 }
 
@@ -845,8 +1028,7 @@ function getHistory() {
   return queueHistoryStorage(async () => {
     const stored = await chrome.storage.local.get({ [HISTORY_KEY]: [] });
     const history = pruneHistory(stored[HISTORY_KEY] || []);
-    await chrome.storage.local.set({ [HISTORY_KEY]: history });
-    return history;
+    return writeBoundedArray(HISTORY_KEY, history, HISTORY_BYTE_BUDGET);
   });
 }
 
@@ -886,10 +1068,7 @@ function recordTokenUsage(usage, meta) {
       .slice(0, MAX_TOKEN_EVENTS);
     const totals = addUsage(stored[TOKEN_TOTALS_KEY], usage);
 
-    await chrome.storage.local.set({
-      [TOKEN_EVENTS_KEY]: events,
-      [TOKEN_TOTALS_KEY]: totals
-    });
+    await writeBoundedTokenData(events, totals);
   });
 }
 
@@ -916,13 +1095,13 @@ function getTokenStats() {
       return totals;
     }, {});
 
-    await chrome.storage.local.set({ [TOKEN_EVENTS_KEY]: events });
+    const boundedEvents = await writeBoundedArray(TOKEN_EVENTS_KEY, events, TOKEN_EVENTS_BYTE_BUDGET);
 
     return {
       recent,
       total: stored[TOKEN_TOTALS_KEY],
       byMode,
-      events
+      events: boundedEvents
     };
   });
 }
@@ -947,6 +1126,84 @@ function addUsage(total, usage) {
   };
 }
 
+function queueBoundedStorage(task) {
+  const run = boundedStorageQueue.then(task, task);
+  boundedStorageQueue = run.catch(() => {});
+  return run;
+}
+
+function writeBoundedArray(key, values, categoryBudget) {
+  return queueBoundedStorage(async () => {
+    const bounded = await fitArrayToStorageBudget(key, values, categoryBudget);
+    await chrome.storage.local.set({ [key]: bounded });
+    return bounded;
+  });
+}
+
+function writeBoundedObject(key, orderedEntries, categoryBudget) {
+  return queueBoundedStorage(async () => {
+    const maxBytes = await getAvailableStorageBudget(key, categoryBudget);
+    const fittedEntries = fitOrderedValuesToByteBudget(
+      orderedEntries,
+      (entries) => Object.fromEntries(entries),
+      key,
+      maxBytes
+    );
+    const bounded = Object.fromEntries(fittedEntries);
+    await chrome.storage.local.set({ [key]: bounded });
+    return bounded;
+  });
+}
+
+function writeBoundedTokenData(events, totals) {
+  return queueBoundedStorage(async () => {
+    const boundedEvents = await fitArrayToStorageBudget(TOKEN_EVENTS_KEY, events, TOKEN_EVENTS_BYTE_BUDGET);
+    await chrome.storage.local.set({
+      [TOKEN_EVENTS_KEY]: boundedEvents,
+      [TOKEN_TOTALS_KEY]: totals
+    });
+    return boundedEvents;
+  });
+}
+
+async function fitArrayToStorageBudget(key, values, categoryBudget) {
+  const maxBytes = await getAvailableStorageBudget(key, categoryBudget);
+  return fitOrderedValuesToByteBudget(values, (items) => items, key, maxBytes);
+}
+
+async function getAvailableStorageBudget(key, categoryBudget) {
+  if (typeof chrome.storage.local.getBytesInUse !== "function") return categoryBudget;
+  try {
+    const [totalBytes, currentKeyBytes] = await Promise.all([
+      chrome.storage.local.getBytesInUse(null),
+      chrome.storage.local.getBytesInUse(key)
+    ]);
+    const available = LOCAL_STORAGE_SOFT_LIMIT - Math.max(0, totalBytes - currentKeyBytes);
+    return Math.max(32 * 1024, Math.min(categoryBudget, available));
+  } catch {
+    return categoryBudget;
+  }
+}
+
+function fitOrderedValuesToByteBudget(values, materialize, key, maxBytes) {
+  let low = 0;
+  let high = values.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    const candidate = materialize(values.slice(0, middle));
+    if (estimateStorageBytes(key, candidate) <= maxBytes) {
+      low = middle;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return values.slice(0, low);
+}
+
+function estimateStorageBytes(key, value) {
+  return new TextEncoder().encode(JSON.stringify({ [key]: value })).byteLength;
+}
+
 function parseJsonArray(content) {
   const trimmed = content.trim();
   const withoutFence = trimmed
@@ -957,13 +1214,47 @@ function parseJsonArray(content) {
 
   try {
     const parsed = JSON.parse(withoutFence);
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) throw new Error("模型返回的整页翻译结果不是数组。");
+    return parsed;
   } catch {
     const start = withoutFence.indexOf("[");
     const end = withoutFence.lastIndexOf("]");
     if (start >= 0 && end > start) {
-      return JSON.parse(withoutFence.slice(start, end + 1));
+      const parsed = JSON.parse(withoutFence.slice(start, end + 1));
+      if (!Array.isArray(parsed)) throw new Error("模型返回的整页翻译结果不是数组。");
+      return parsed;
     }
     throw new Error("模型没有返回可解析的整页翻译 JSON。");
   }
+}
+
+function validateBatchTranslations(parsed, payload) {
+  const requestedIds = new Set(payload.map((item) => String(item.id)));
+  const translations = new Map();
+  const duplicateIds = new Set();
+
+  parsed.forEach((item) => {
+    if (!item || typeof item !== "object") return;
+    const id = String(item.id);
+    if (!requestedIds.has(id) || typeof item.translation !== "string" || !item.translation.trim()) return;
+    if (translations.has(id)) {
+      duplicateIds.add(id);
+      translations.delete(id);
+      return;
+    }
+    if (!duplicateIds.has(id)) translations.set(id, item.translation.trim());
+  });
+
+  return payload
+    .filter((item) => translations.has(String(item.id)))
+    .map((item) => ({ id: item.id, translation: translations.get(String(item.id)) }));
+}
+
+async function runNonCriticalStorageTasks(...tasks) {
+  const results = await Promise.allSettled(tasks.map(([, task]) => Promise.resolve().then(task)));
+  results.forEach((result, index) => {
+    if (result.status === "rejected") {
+      console.warn(`[AI小译] ${tasks[index][0]}保存失败：`, result.reason);
+    }
+  });
 }

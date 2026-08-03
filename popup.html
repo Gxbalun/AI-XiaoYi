@@ -16,6 +16,10 @@
         <div class="header-actions">
           <button id="assistantModeToggle" class="mode-toggle assistant-mode-toggle" type="button">随身译</button>
           <button id="selectionModeToggle" class="mode-toggle selection-mode-toggle" type="button">随手划</button>
+          <div id="selectionLanguageControl" class="selection-language-control">
+            <select id="selectionTargetLanguage" aria-label="随手划目标语言"></select>
+            <span class="selection-language-caret" aria-hidden="true"></span>
+          </div>
         </div>
         <span id="status" role="status"></span>
       </header>
@@ -37,7 +41,7 @@
               API Key
               <input id="apiKey" type="password" placeholder="sk-..." autocomplete="off" />
             </label>
-            <p class="security-note">API Key 仅保存在本机浏览器扩展存储中，小译只会在你发起翻译或测试连接时使用。</p>
+            <p class="security-note">API Key 仅保存在本机浏览器扩展存储中，不会通过 Chrome 同步；小译只会在你发起翻译或测试连接时使用。</p>
 
             <label>
               模型名称
@@ -50,72 +54,20 @@
 
         <section class="self-translate-card">
           <button id="toggleSelfTranslate" class="self-toggle" type="button" aria-expanded="true">
-            <span class="with-icon"><span class="ui-icon icon-spark" aria-hidden="true">✦</span><span>自助翻译</span></span>
+            <span class="with-icon"><span class="ui-icon icon-spark" aria-hidden="true">✦</span><span>自助译</span></span>
             <span id="selfSummary">自动识别 → 中文</span>
           </button>
 
           <div id="selfTranslateBody" class="self-body">
             <div class="translate-controls">
-              <select id="sourceLanguage" aria-label="原语言">
-                <option value="自动识别">自动识别</option>
-                <option value="中文">中文</option>
-                <option value="繁体中文">繁体中文</option>
-                <option value="英文">英文</option>
-                <option value="日文">日文</option>
-                <option value="韩文">韩文</option>
-                <option value="法文">法文</option>
-                <option value="德文">德文</option>
-                <option value="西班牙文">西班牙文</option>
-                <option value="葡萄牙文">葡萄牙文</option>
-                <option value="意大利文">意大利文</option>
-                <option value="俄文">俄文</option>
-                <option value="阿拉伯文">阿拉伯文</option>
-                <option value="印地文">印地文</option>
-                <option value="泰文">泰文</option>
-                <option value="越南文">越南文</option>
-                <option value="印尼文">印尼文</option>
-                <option value="马来文">马来文</option>
-                <option value="土耳其文">土耳其文</option>
-                <option value="荷兰文">荷兰文</option>
-                <option value="波兰文">波兰文</option>
-                <option value="瑞典文">瑞典文</option>
-                <option value="希腊文">希腊文</option>
-                <option value="希伯来文">希伯来文</option>
-                <option value="乌克兰文">乌克兰文</option>
-              </select>
+              <select id="sourceLanguage" aria-label="原语言"></select>
               <button id="swapLanguages" class="swap-button" type="button" title="反转翻译" aria-label="反转翻译">
                 <span class="swap-icon" aria-hidden="true">
                   <span class="swap-icon-line swap-icon-top"></span>
                   <span class="swap-icon-line swap-icon-bottom"></span>
                 </span>
               </button>
-              <select id="targetLanguage" aria-label="目标语言">
-                <option value="自动（中英互译）">自动(中英)</option>
-                <option value="中文">中文</option>
-                <option value="繁体中文">繁体中文</option>
-                <option value="英文">英文</option>
-                <option value="日文">日文</option>
-                <option value="韩文">韩文</option>
-                <option value="法文">法文</option>
-                <option value="德文">德文</option>
-                <option value="西班牙文">西班牙文</option>
-                <option value="葡萄牙文">葡萄牙文</option>
-                <option value="意大利文">意大利文</option>
-                <option value="俄文">俄文</option>
-                <option value="阿拉伯文">阿拉伯文</option>
-                <option value="印地文">印地文</option>
-                <option value="泰文">泰文</option>
-                <option value="越南文">越南文</option>
-                <option value="印尼文">印尼文</option>
-                <option value="马来文">马来文</option>
-                <option value="土耳其文">土耳其文</option>
-                <option value="荷兰文">荷兰文</option>
-                <option value="波兰文">波兰文</option>
-                <option value="瑞典文">瑞典文</option>
-                <option value="希腊文">希腊文</option>
-                <option value="希伯来文">希伯来文</option>
-                <option value="乌克兰文">乌克兰文</option>
-              </select>
+              <select id="targetLanguage" aria-label="目标语言"></select>
               <button id="selfTranslate" class="primary-button" type="button">翻译</button>
             </div>
 
@@ -156,7 +108,7 @@
             <option value="all">全部类型</option>
             <option value="selection">随手划</option>
             <option value="page">整页翻译</option>
-            <option value="self">自助翻译</option>
+            <option value="self">自助译</option>
           </select>
           <input id="historySearch" class="history-search" type="search" placeholder="搜索历史" autocomplete="off" />
           <button id="clearHistory" class="danger-button page-action" type="button"><span class="with-icon"><span class="ui-icon icon-close" aria-hidden="true">×</span><span>清空历史</span></span></button>
@@ -195,6 +147,7 @@
 
     <div id="wordStudyDialog" class="word-study-dialog" hidden></div>
 
+    <script src="languages.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

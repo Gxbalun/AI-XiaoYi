@@ -4,15 +4,17 @@ const DEFAULT_SETTINGS = {
   model: "gpt-4o-mini",
   targetLanguage: "中文"
 };
-const CONTENT_VERSION = "1.2.0";
+const CONTENT_VERSION = "1.2.1";
 const ASSISTANT_MODE_ENABLED_KEY = "assistantModeEnabled";
 const ASSISTANT_MODE_PAUSED_UNTIL_KEY = "assistantModePausedUntil";
 const SELECTION_TRANSLATION_ENABLED_KEY = "selectionTranslationEnabled";
+const SELECTION_TARGET_LANGUAGE_KEY = "selectionTargetLanguage";
 const PAGE_DISPLAY_MODE_KEY = "pageTranslationDisplayMode";
 const UI_STATE_DEFAULTS = {
   selfTranslateExpanded: true,
   selfSourceLanguage: "自动识别",
   selfTargetLanguage: "自动（中英互译）",
+  [SELECTION_TARGET_LANGUAGE_KEY]: "中文",
   [PAGE_DISPLAY_MODE_KEY]: "translated"
 };
 
@@ -25,6 +27,8 @@ const fields = {
 const statusEl = document.getElementById("status");
 const assistantModeToggle = document.getElementById("assistantModeToggle");
 const selectionModeToggle = document.getElementById("selectionModeToggle");
+const selectionLanguageControl = document.getElementById("selectionLanguageControl");
+const selectionTargetLanguageSelect = document.getElementById("selectionTargetLanguage");
 const mainView = document.getElementById("mainView");
 const historyView = document.getElementById("historyView");
 const usageView = document.getElementById("usageView");
@@ -72,6 +76,10 @@ let pageTranslationState = { translated: false, bilingual: false };
 document.addEventListener("DOMContentLoaded", init);
 assistantModeToggle.addEventListener("click", toggleAssistantMode);
 selectionModeToggle.addEventListener("click", toggleSelectionMode);
+selectionTargetLanguageSelect.addEventListener("change", async () => {
+  await setSelectionTargetLanguage(selectionTargetLanguageSelect.value, true);
+  showStatus(`随手划将翻译为${getLanguageDisplayLabel(selectionTargetLanguageSelect.value)}`);
+});
 toggleSettingsButton.addEventListener("click", toggleSettings);
 toggleSelfTranslateButton.addEventListener("click", toggleSelfTranslate);
 saveButton.addEventListener("click", saveSettings);
@@ -161,6 +169,9 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === "local" && changes[SELECTION_TRANSLATION_ENABLED_KEY]) {
     syncSelectionModeButton();
   }
+  if (areaName === "local" && changes[SELECTION_TARGET_LANGUAGE_KEY]) {
+    setSelectionTargetLanguage(changes[SELECTION_TARGET_LANGUAGE_KEY].newValue, false);
+  }
   if (
     areaName === "local" &&
     (changes[ASSISTANT_MODE_ENABLED_KEY] || changes[ASSISTANT_MODE_PAUSED_UNTIL_KEY])
@@ -176,13 +187,17 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 });
 
 async function init() {
-  const settings = await chrome.storage.sync.get(DEFAULT_SETTINGS);
+  populateLanguageSelects();
+  const settingsResponse = await chrome.runtime.sendMessage({ type: "get-popup-settings" });
+  if (!settingsResponse?.ok) throw new Error(settingsResponse?.error || "读取模型配置失败");
+  const settings = { ...DEFAULT_SETTINGS, ...settingsResponse.settings };
   const uiState = await chrome.storage.local.get(UI_STATE_DEFAULTS);
   Object.entries(fields).forEach(([key, input]) => {
     input.value = settings[key] ?? DEFAULT_SETTINGS[key];
   });
   setSourceLanguage(uiState.selfSourceLanguage || UI_STATE_DEFAULTS.selfSourceLanguage, true);
   setTargetLanguage(uiState.selfTargetLanguage || UI_STATE_DEFAULTS.selfTargetLanguage);
+  await setSelectionTargetLanguage(uiState[SELECTION_TARGET_LANGUAGE_KEY], false);
   pageTranslationState.bilingual = uiState[PAGE_DISPLAY_MODE_KEY] === "bilingual";
   setSelfTranslateExpanded(Boolean(uiState.selfTranslateExpanded), false);
   syncSelfSummary();
@@ -300,7 +315,12 @@ async function translatePage() {
 }
 
 async function persistSettings(settings) {
-  await chrome.storage.sync.set(settings);
+  const response = await chrome.runtime.sendMessage({
+    type: "save-settings",
+    settings,
+    preserveApiKey: false
+  });
+  if (!response?.ok) throw new Error(response?.error || "保存设置失败");
 }
 
 async function restorePage() {
@@ -492,18 +512,23 @@ async function ensureContentScript(tab) {
     throw new Error("当前页面不支持注入翻译脚本，请在普通网页中使用。");
   }
 
+  let ping;
   try {
-    const ping = await chrome.tabs.sendMessage(tab.id, { type: "translator-ping" });
-    if (ping?.ok && ping.version === CONTENT_VERSION) return;
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      files: ["content.js"]
-    });
+    ping = await chrome.tabs.sendMessage(tab.id, { type: "translator-ping" });
   } catch {
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      files: ["content.js"]
-    });
+    throw new Error("插件刚刚更新过，请刷新当前网页后再试。");
+  }
+  if (ping?.ok && ping.version === CONTENT_VERSION) return;
+  if (!ping?.ok || ping.canDispose !== true) {
+    throw new Error("当前网页仍在运行旧版小译，请刷新网页后再试。");
+  }
+  await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    files: ["languages.js", "content.js"]
+  });
+  const refreshedPing = await chrome.tabs.sendMessage(tab.id, { type: "translator-ping" });
+  if (!refreshedPing?.ok || refreshedPing.version !== CONTENT_VERSION) {
+    throw new Error("小译没有完成更新，请刷新当前网页后再试。");
   }
 }
 
@@ -833,13 +858,7 @@ function renderUsageBars(byMode) {
 function setTargetLanguage(language) {
   if (language === "自动识别（中英互译）") language = "自动（中英互译）";
   const exists = Array.from(targetLanguageSelect.options).some((option) => option.value === language);
-  if (!exists) {
-    const option = document.createElement("option");
-    option.value = language;
-    option.textContent = language;
-    targetLanguageSelect.appendChild(option);
-  }
-  targetLanguageSelect.value = language;
+  targetLanguageSelect.value = exists ? language : "自动（中英互译）";
   syncSelfSummary();
 }
 
@@ -864,7 +883,7 @@ function autoDetectSelfSourceLanguage() {
 
 function getModeLabel(mode, count) {
   if (mode === "page") return `整页翻译${count ? ` · ${count} 段` : ""}`;
-  if (mode === "self") return "自助翻译";
+  if (mode === "self") return "自助译";
   if (mode === "word") return "单词学习";
   if (mode === "test") return "连接测试";
   return "随手划";
@@ -898,6 +917,42 @@ function readSettings() {
     Object.entries(fields).map(([key, input]) => [key, input.value.trim()])
   );
   return { ...settings, targetLanguage: "中文" };
+}
+
+function populateLanguageSelects() {
+  const registry = globalThis.AI_XIAOYI_LANGUAGES;
+  if (!registry?.source?.length || !registry?.target?.length) {
+    throw new Error("语言列表加载失败。");
+  }
+  populateLanguageSelect(sourceLanguageSelect, registry.source);
+  populateLanguageSelect(targetLanguageSelect, registry.target);
+  populateLanguageSelect(selectionTargetLanguageSelect, registry.target);
+}
+
+async function setSelectionTargetLanguage(language, persist) {
+  const languages = globalThis.AI_XIAOYI_LANGUAGES?.target || [];
+  const supported = languages.some(([value]) => value === language);
+  const nextLanguage = supported ? language : "中文";
+  selectionTargetLanguageSelect.value = nextLanguage;
+  selectionLanguageControl.dataset.languageLabel = `目标：${getLanguageDisplayLabel(nextLanguage)}`;
+  selectionTargetLanguageSelect.setAttribute("aria-label", `随手划目标语言：${getLanguageDisplayLabel(nextLanguage)}`);
+  if (persist) {
+    await chrome.storage.local.set({ [SELECTION_TARGET_LANGUAGE_KEY]: nextLanguage });
+  }
+}
+
+function getLanguageDisplayLabel(language) {
+  const match = (globalThis.AI_XIAOYI_LANGUAGES?.target || []).find(([value]) => value === language);
+  return match?.[1] || language || "中文";
+}
+
+function populateLanguageSelect(select, languages) {
+  select.replaceChildren(...languages.map(([value, label]) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    return option;
+  }));
 }
 
 function showView(view) {

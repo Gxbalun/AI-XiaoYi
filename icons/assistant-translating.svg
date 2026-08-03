@@ -18,20 +18,6 @@
       <feDropShadow dx="1.1" dy="1.8" stdDeviation="1.25" flood-color="#2563eb" flood-opacity=".2"/>
     </filter>
   </defs>
-  <style>
-    .spark {
-      transform-box: fill-box;
-      transform-origin: center;
-      animation: sparkle 3.8s ease-out infinite;
-    }
-    @keyframes sparkle {
-      0%, 44% { transform: scale(.86) rotate(0deg); opacity: .74; }
-      52% { transform: scale(1.16) rotate(13deg); opacity: 1; }
-      62%, 100% { transform: scale(1) rotate(0deg); opacity: .84; }
-    }
-    @media (prefers-reduced-motion: reduce) { .spark { animation: none; } }
-  </style>
-
   <path d="M35 41c7-7 18-9 29-3v55c-11-6-22-4-29 3V41z" fill="#fff" stroke="#93C5FD" stroke-width="4" stroke-linejoin="round"/>
   <path d="M64 38c11-6 22-4 29 3v55c-7-7-18-9-29-3V38z" fill="#fff" stroke="#93C5FD" stroke-width="4" stroke-linejoin="round"/>
   <path d="M45 55h10M45 68h10M74 55h10M74 68h10" stroke="#64748B" stroke-width="4" stroke-linecap="round"/>
@@ -142,5 +128,4 @@
       keyTimes="0;.59;.64;.71;.76;1" values="0;0;1;1;0;0"/>
   </g>
   <path d="M56 31 C61 36 67 36 72 31" fill="none" stroke="#22C55E" stroke-width="4" stroke-linecap="round"/>
-  <path class="spark" d="M98 28l4 8 8 4-8 4-4 8-4-8-8-4 8-4 4-8z" fill="#F59E0B"/>
 </svg>

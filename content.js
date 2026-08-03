@@ -1,31 +1,30 @@
 (() => {
-const CONTENT_VERSION = "1.2.0";
+const CONTENT_VERSION = "1.2.1";
 if (window.__MODEL_TRANSLATOR_CONTENT_VERSION__ === CONTENT_VERSION) {
   return;
 }
 if (window.__MODEL_TRANSLATOR_CONTENT_VERSION__) {
-  [
-    "model-translator-selection-button-v2",
-    "model-translator-popover-v2",
-    "model-translator-word-popover-v2",
-    "model-translator-floating-host-v2",
-    "model-translator-floating-glass-v2",
-    "model-translator-floating-glass-definitions-v2"
-  ].forEach((id) => document.getElementById(id)?.remove());
+  if (typeof window.__MODEL_TRANSLATOR_CONTENT_DISPOSE__ !== "function") return;
+  window.__MODEL_TRANSLATOR_CONTENT_DISPOSE__();
 }
 window.__MODEL_TRANSLATOR_CONTENT_LOADED__ = true;
 window.__MODEL_TRANSLATOR_CONTENT_VERSION__ = CONTENT_VERSION;
+document.documentElement.dataset.modelTranslatorContentVersion = CONTENT_VERSION;
+const contentLifecycleController = new AbortController();
+const contentLifecycleSignal = contentLifecycleController.signal;
 
 const BUTTON_ID = "model-translator-selection-button-v2";
 const POPOVER_ID = "model-translator-popover-v2";
+const SELECTION_LANGUAGE_MENU_ID = "model-translator-selection-language-menu-v2";
 const WORD_POPOVER_ID = "model-translator-word-popover-v2";
 const FLOATING_HOST_ID = "model-translator-floating-host-v2";
 const FLOATING_GLASS_ID = "model-translator-floating-glass-v2";
 const FLOATING_GLASS_DEFINITIONS_ID = "model-translator-floating-glass-definitions-v2";
+const CONTENT_STYLE_ID = "model-translator-content-style-v2";
 const FLOATING_POSITION_KEY = "floatingButtonPosition";
 const FLOATING_PANEL_PREFERENCES_KEY = "floatingPanelPreferences";
 const PAGE_DISPLAY_MODE_KEY = "pageTranslationDisplayMode";
-const ASSISTANT_IDLE_ICON_PATH = "icons/assistant-idle.svg";
+const ASSISTANT_IDLE_ICON_PATH = "icons/assistant-idle-floating.svg";
 const ASSISTANT_TRANSLATING_ICON_PATH = "icons/assistant-translating.svg";
 const SELECTION_IDLE_ICON_PATH = "icons/selection-idle.svg";
 const SELECTION_TRANSLATING_ICON_PATH = "icons/selection-translating.svg";
@@ -35,6 +34,7 @@ const PANEL_OPACITY_MAX = 100;
 const ASSISTANT_MODE_ENABLED_KEY = "assistantModeEnabled";
 const ASSISTANT_MODE_PAUSED_UNTIL_KEY = "assistantModePausedUntil";
 const SELECTION_TRANSLATION_ENABLED_KEY = "selectionTranslationEnabled";
+const SELECTION_TARGET_LANGUAGE_KEY = "selectionTargetLanguage";
 const ASSISTANT_MODE_PAUSE_MS = 30 * 60 * 1000;
 const DEFAULT_SETTINGS = {
   baseUrl: "https://api.openai.com/v1/chat/completions",
@@ -42,27 +42,8 @@ const DEFAULT_SETTINGS = {
   model: "gpt-4o-mini",
   targetLanguage: "中文"
 };
-const SELF_TARGET_LANGUAGES = [
-  ["自动（中英互译）", "自动(中英)"],
-  ["中文", "中文"],
-  ["繁体中文", "繁体中文"],
-  ["英文", "英文"],
-  ["日文", "日文"],
-  ["韩文", "韩文"],
-  ["法文", "法文"],
-  ["德文", "德文"],
-  ["西班牙文", "西班牙文"],
-  ["葡萄牙文", "葡萄牙文"],
-  ["意大利文", "意大利文"],
-  ["俄文", "俄文"],
-  ["阿拉伯文", "阿拉伯文"],
-  ["泰文", "泰文"],
-  ["越南文", "越南文"]
-];
-const SELF_SOURCE_LANGUAGES = [
-  ["自动识别", "自动识别"],
-  ...SELF_TARGET_LANGUAGES.filter(([value]) => value !== "自动（中英互译）")
-];
+const SELF_TARGET_LANGUAGES = globalThis.AI_XIAOYI_LANGUAGES?.target || [];
+const SELF_SOURCE_LANGUAGES = globalThis.AI_XIAOYI_LANGUAGES?.source || [];
 const PAGE_LIMIT = 140;
 const PAGE_BATCH_SIZE = 24;
 const PAGE_BATCH_CONCURRENCY = 4;
@@ -84,6 +65,7 @@ let currentSelection = "";
 let currentRange = null;
 let translatedNodes = [];
 let translatedNodeSet = new WeakSet();
+let translatedNodeEntries = new WeakMap();
 let pageTranslationDisplayMode = document.documentElement.dataset.modelTranslatorPageDisplayMode === "bilingual"
   ? "bilingual"
   : "translated";
@@ -114,13 +96,17 @@ let pagePersistentCacheFlushTimer = 0;
 const pagePersistentCacheDirtyEntries = new Map();
 const pageTranslationCache = new Map();
 const assistantTranslationBusyKeys = new Set();
+const selectionPopoverContexts = new WeakMap();
 let selectionTranslationEnabled = true;
+let selectionTargetLanguage = "中文";
+let selectionTargetLanguagePreferenceReady = Promise.resolve();
+let floatingAssistantShadow = null;
 
 document.addEventListener("mouseup", (event) => {
   if (isTranslatorUiTarget(event.target)) return;
   const pointerPosition = { clientX: event.clientX, clientY: event.clientY };
   window.setTimeout(() => handleSelectionChange(pointerPosition), 80);
-});
+}, { signal: contentLifecycleSignal });
 
 document.addEventListener("click", (event) => {
   const target = event.target instanceof Element ? event.target : null;
@@ -135,13 +121,13 @@ document.addEventListener("click", (event) => {
   if (pageTranslationEnabled) {
     window.setTimeout(scheduleLazyPageTranslation, 220);
   }
-});
+}, { signal: contentLifecycleSignal });
 
 document.addEventListener("pointerover", (event) => {
   if (!pageTranslationEnabled || isTranslatorUiTarget(event.target)) return;
   window.clearTimeout(pageHoverTimer);
   pageHoverTimer = window.setTimeout(scheduleLazyPageTranslation, 260);
-}, true);
+}, { capture: true, signal: contentLifecycleSignal });
 
 document.addEventListener("keyup", (event) => {
   if (document.getElementById(POPOVER_ID)) return;
@@ -151,29 +137,34 @@ document.addEventListener("keyup", (event) => {
   } else {
     handleSelectionChange();
   }
-});
+}, { signal: contentLifecycleSignal });
 
 document.addEventListener("scroll", () => {
   removeSelectionButton();
+  removeElement(SELECTION_LANGUAGE_MENU_ID);
   scheduleLazyPageTranslation();
-}, true);
-document.addEventListener("click", syncPageDisplayModeFromComposedClick, true);
-document.addEventListener("fullscreenchange", syncAssistantModeVisibility);
+}, { capture: true, signal: contentLifecycleSignal });
+document.addEventListener("click", syncPageDisplayModeFromComposedClick, { capture: true, signal: contentLifecycleSignal });
+document.addEventListener("fullscreenchange", syncAssistantModeVisibility, { signal: contentLifecycleSignal });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") {
     void flushPageTranslationCache();
   }
-});
+}, { signal: contentLifecycleSignal });
 window.addEventListener("pagehide", () => {
   void flushPageTranslationCache();
-});
+}, { signal: contentLifecycleSignal });
 
 syncAssistantModeVisibility();
 syncSelectionTranslationPreference();
+selectionTargetLanguagePreferenceReady = syncSelectionTargetLanguagePreference();
 pageDisplayPreferenceReady = syncPageTranslationDisplayPreference();
-chrome.storage.onChanged.addListener((changes, areaName) => {
+const handleContentStorageChange = (changes, areaName) => {
   if (areaName === "local" && changes[SELECTION_TRANSLATION_ENABLED_KEY]) {
     applySelectionTranslationPreference(changes[SELECTION_TRANSLATION_ENABLED_KEY].newValue !== false);
+  }
+  if (areaName === "local" && changes[SELECTION_TARGET_LANGUAGE_KEY]) {
+    applySelectionTargetLanguagePreference(changes[SELECTION_TARGET_LANGUAGE_KEY].newValue);
   }
   if (
     areaName === "local" &&
@@ -184,11 +175,12 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === "local" && changes[PAGE_DISPLAY_MODE_KEY]) {
     setPageBilingualDisplay(changes[PAGE_DISPLAY_MODE_KEY].newValue === "bilingual", { persist: false });
   }
-});
+};
+chrome.storage.onChanged.addListener(handleContentStorageChange);
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+const handleContentRuntimeMessage = (message, sender, sendResponse) => {
   if (message?.type === "translator-ping") {
-    sendResponse({ ok: true, version: CONTENT_VERSION });
+    sendResponse({ ok: true, version: CONTENT_VERSION, canDispose: true });
     return;
   }
 
@@ -228,7 +220,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     setFloatingAssistantTranslationBusy(message.requestId || "external", message.busy !== false);
     sendResponse({ ok: true });
   }
-});
+};
+chrome.runtime.onMessage.addListener(handleContentRuntimeMessage);
+window.__MODEL_TRANSLATOR_CONTENT_DISPOSE__ = disposeContentScript;
 
 function handleSelectionChange(pointerPosition = null) {
   if (!getExtensionAssetUrl("")) {
@@ -312,30 +306,39 @@ async function translateSelection(event) {
 
   const rect = currentRange ? getRangeRect(currentRange) : button.getBoundingClientRect();
   const buttonRect = button.getBoundingClientRect();
-  const selectedWord = getSingleEnglishWord(currentSelection);
-  if (selectedWord) {
+  const sourceText = currentSelection;
+  const selectedWord = getSingleEnglishWord(sourceText);
+  await selectionTargetLanguagePreferenceReady;
+  const targetLanguage = selectionTargetLanguage;
+  const shouldShowWordDetails = selectedWord && (
+    targetLanguage === "中文" ||
+    targetLanguage === "自动（中英互译）"
+  );
+  if (shouldShowWordDetails) {
     removeSelectionButton();
-    await openWordPopover(selectedWord, currentSelection, rect || buttonRect);
+    await openWordPopover(selectedWord, sourceText, rect || buttonRect);
     return;
   }
-  const popover = showLoadingPopover(rect, buttonRect);
+  const popover = showLoadingPopover(rect, buttonRect, targetLanguage);
+  selectionPopoverContexts.set(popover, { sourceText, rect, targetLanguage });
   removeSelectionButton();
 
   try {
     const response = await chrome.runtime.sendMessage({
       type: "translate-text",
       mode: "selection",
-      text: currentSelection
+      text: sourceText,
+      targetLanguage
     });
 
     if (!response?.ok) throw new Error(response?.error || "翻译失败");
     if (popover.isConnected) {
-      renderPopoverContent(popover, response.translation, false, currentSelection);
+      renderPopoverContent(popover, response.translation, false, sourceText, targetLanguage);
       positionPopover(popover, rect);
     }
   } catch (error) {
     if (popover.isConnected) {
-      renderPopoverContent(popover, error.message || String(error), true);
+      renderPopoverContent(popover, error.message || String(error), true, sourceText, targetLanguage);
       positionPopover(popover, rect);
     }
   }
@@ -349,11 +352,11 @@ function getSingleEnglishWord(value) {
   return /^[A-Za-z]+(?:['’][A-Za-z]+|-[A-Za-z]+)*$/.test(normalized) ? normalized : null;
 }
 
-function showLoadingPopover(rect, sourceRect) {
+function showLoadingPopover(rect, sourceRect, targetLanguage = selectionTargetLanguage) {
   removeElement(POPOVER_ID);
 
   const popover = createPopover();
-  renderPopoverLoading(popover);
+  renderPopoverLoading(popover, targetLanguage);
   document.documentElement.appendChild(popover);
   const metrics = positionPopover(popover, rect);
   animatePopoverFrom(popover, sourceRect, metrics);
@@ -376,11 +379,16 @@ function createPopover() {
   popover.id = POPOVER_ID;
   popover.addEventListener("mousedown", stopUiEvent);
   popover.addEventListener("mouseup", stopUiEvent);
-  popover.addEventListener("click", stopUiEvent);
+  popover.addEventListener("click", (event) => {
+    if (!event.target.closest(".model-translator-selection-language-trigger")) {
+      removeElement(SELECTION_LANGUAGE_MENU_ID);
+    }
+    stopUiEvent(event);
+  });
   return popover;
 }
 
-function renderPopoverLoading(popover) {
+function renderPopoverLoading(popover, targetLanguage = selectionTargetLanguage) {
   popover.textContent = "";
   popover.dataset.state = "loading";
 
@@ -397,13 +405,14 @@ function renderPopoverLoading(popover) {
 
   const typeLabel = document.createElement("span");
   typeLabel.className = "model-translator-popover-type";
-  typeLabel.textContent = "随手划 · 自动识别 -> 中文";
+  typeLabel.textContent = `随手划 · 自动识别 → ${getSelectionLanguageDisplayLabel(targetLanguage)}`;
 
   footer.appendChild(typeLabel);
   popover.append(body, footer);
 }
 
-function renderPopoverContent(popover, text, isError = false, sourceText = "") {
+function renderPopoverContent(popover, text, isError = false, sourceText = "", targetLanguage = selectionTargetLanguage) {
+  removeElement(SELECTION_LANGUAGE_MENU_ID);
   popover.textContent = "";
   if (isError) {
     popover.dataset.state = "error";
@@ -446,12 +455,108 @@ function renderPopoverContent(popover, text, isError = false, sourceText = "") {
   const footer = document.createElement("div");
   footer.className = "model-translator-popover-footer";
 
-  const typeLabel = document.createElement("span");
-  typeLabel.className = "model-translator-popover-type";
-  typeLabel.textContent = isError ? "随手划" : "随手划 · 自动识别 -> 中文";
+  const typeLabel = createSelectionLanguageTrigger(popover, targetLanguage);
 
   footer.append(typeLabel, copyButton);
   popover.append(body, footer);
+}
+
+function createSelectionLanguageTrigger(popover, targetLanguage) {
+  const trigger = document.createElement("button");
+  trigger.type = "button";
+  trigger.className = "model-translator-popover-type model-translator-selection-language-trigger";
+  trigger.setAttribute("aria-label", "切换随手划目标语言");
+  trigger.setAttribute("aria-expanded", "false");
+  trigger.innerHTML = `<span>随手划 · 自动识别 → ${escapeHtml(getSelectionLanguageDisplayLabel(targetLanguage))}</span><i aria-hidden="true"></i>`;
+  trigger.addEventListener("mousedown", (event) => event.preventDefault());
+  trigger.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const existing = document.getElementById(SELECTION_LANGUAGE_MENU_ID);
+    if (existing) {
+      existing.remove();
+      trigger.setAttribute("aria-expanded", "false");
+      return;
+    }
+    openSelectionLanguageMenu(popover, trigger, targetLanguage);
+  });
+  return trigger;
+}
+
+function openSelectionLanguageMenu(popover, trigger, targetLanguage) {
+  removeElement(SELECTION_LANGUAGE_MENU_ID);
+  const menu = document.createElement("div");
+  menu.id = SELECTION_LANGUAGE_MENU_ID;
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = SELF_TARGET_LANGUAGES.map(([value, label]) => `
+    <button type="button" class="${value === targetLanguage ? "is-active" : ""}" role="menuitemradio" aria-checked="${value === targetLanguage}" data-selection-target-language="${escapeHtml(value)}">
+      <span>${escapeHtml(label)}</span>
+    </button>
+  `).join("");
+  menu.addEventListener("mousedown", (event) => event.preventDefault());
+  menu.addEventListener("click", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const option = event.target.closest("[data-selection-target-language]");
+    if (!option) return;
+    const nextLanguage = normalizeSelectionTargetLanguage(option.dataset.selectionTargetLanguage);
+    menu.remove();
+    trigger.setAttribute("aria-expanded", "false");
+    await chrome.storage.local.set({ [SELECTION_TARGET_LANGUAGE_KEY]: nextLanguage });
+    if (popover.isConnected) {
+      await retranslateSelectionPopover(popover, nextLanguage);
+    }
+  });
+  document.documentElement.appendChild(menu);
+  trigger.setAttribute("aria-expanded", "true");
+  positionSelectionLanguageMenu(menu, trigger.getBoundingClientRect());
+}
+
+function positionSelectionLanguageMenu(menu, triggerRect) {
+  const viewportGap = 8;
+  const menuWidth = Math.min(164, window.innerWidth - viewportGap * 2);
+  menu.style.width = `${menuWidth}px`;
+  const menuHeight = menu.offsetHeight;
+  const left = Math.min(window.innerWidth - menuWidth - viewportGap, Math.max(viewportGap, triggerRect.left));
+  const top = triggerRect.top >= menuHeight + 7 + viewportGap
+    ? triggerRect.top - menuHeight - 7
+    : Math.min(window.innerHeight - menuHeight - viewportGap, triggerRect.bottom + 7);
+  Object.assign(menu.style, { left: `${left}px`, top: `${Math.max(viewportGap, top)}px` });
+}
+
+async function retranslateSelectionPopover(popover, targetLanguage) {
+  const context = selectionPopoverContexts.get(popover);
+  if (!context?.sourceText) return;
+  const nextContext = { ...context, targetLanguage };
+  selectionPopoverContexts.set(popover, nextContext);
+  renderPopoverLoading(popover, targetLanguage);
+  positionPopover(popover, context.rect);
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "translate-text",
+      mode: "selection",
+      text: context.sourceText,
+      targetLanguage
+    });
+    if (!response?.ok) throw new Error(response?.error || "翻译失败");
+    if (popover.isConnected) {
+      renderPopoverContent(popover, response.translation, false, context.sourceText, targetLanguage);
+      positionPopover(popover, context.rect);
+    }
+  } catch (error) {
+    if (popover.isConnected) {
+      renderPopoverContent(popover, error.message || String(error), true, context.sourceText, targetLanguage);
+      positionPopover(popover, context.rect);
+    }
+  }
+}
+
+function getSelectionLanguageDisplayLabel(language) {
+  return SELF_TARGET_LANGUAGES.find(([value]) => value === language)?.[1] || language || "中文";
+}
+
+function normalizeSelectionTargetLanguage(language) {
+  return SELF_TARGET_LANGUAGES.some(([value]) => value === language) ? language : "中文";
 }
 
 function appendLearnableText(container, text, sentence) {
@@ -923,7 +1028,7 @@ async function translateVisiblePage(options = {}) {
       const text = original.trim();
       const cached = pageTranslationForceRefresh
         ? ""
-        : getCachedPageTranslation(text) || getPersistentPageTranslation(text, cacheMeta);
+        : getCachedPageTranslation(text, cacheMeta) || getPersistentPageTranslation(text, cacheMeta);
 
       if (cached) {
         applyNodeTranslation(node, original, cached);
@@ -1039,7 +1144,7 @@ async function translatePageChunk(chunk, baseIndex, cacheMeta, cancelToken) {
 
     pageTranslationFailureCooldown.delete(entry.node);
     clearPageTranslationFailure(entry);
-    setCachedPageTranslation(entry.text, translation);
+    setCachedPageTranslation(entry.text, translation, cacheMeta);
     setPersistentPageTranslation(entry.text, translation, cacheMeta);
     applyNodeTranslation(entry.node, entry.original, translation);
     translatedCount += 1;
@@ -1068,9 +1173,19 @@ async function waitForPageBatchRetry(delay, cancelToken) {
 
 function applyNodeTranslation(node, original, translation) {
   if (translatedNodeSet.has(node)) return;
-  const entry = { node, original, translation: preserveOuterWhitespace(original, translation), wrapper: null, compactTarget: null, originalTitle: null };
+  const renderedTranslation = preserveOuterWhitespace(original, translation);
+  const entry = {
+    node,
+    original,
+    translation: renderedTranslation,
+    lastRenderedValue: renderedTranslation,
+    wrapper: null,
+    compactTarget: null,
+    originalTitle: null
+  };
   translatedNodes.push(entry);
   translatedNodeSet.add(node);
+  translatedNodeEntries.set(node, entry);
   renderPageTranslationEntry(entry);
 }
 
@@ -1090,7 +1205,7 @@ function setPageBilingualDisplay(enabled, { persist = true } = {}) {
 }
 
 function updateFloatingPageDisplayModeUi() {
-  const shadow = document.getElementById(FLOATING_HOST_ID)?.shadowRoot;
+  const shadow = getFloatingShadowRoot();
   if (!shadow) return;
   const displayDot = shadow.querySelector('[data-action="display"]');
   const displayMenu = shadow.querySelector(".floating-page-display-menu");
@@ -1104,6 +1219,7 @@ function updateFloatingPageDisplayModeUi() {
 async function syncPageTranslationDisplayPreference() {
   try {
     const stored = await chrome.storage.local.get({ [PAGE_DISPLAY_MODE_KEY]: "translated" });
+    if (contentLifecycleSignal.aborted) return;
     setPageBilingualDisplay(stored[PAGE_DISPLAY_MODE_KEY] === "bilingual", { persist: false });
   } catch {
     setPageBilingualDisplay(pageTranslationDisplayMode === "bilingual", { persist: false });
@@ -1125,7 +1241,8 @@ function renderPageTranslationEntry(entry) {
       entry.compactTarget = null;
       entry.originalTitle = null;
     }
-    entry.node.nodeValue = entry.translation;
+    entry.lastRenderedValue = entry.translation;
+    entry.node.nodeValue = entry.lastRenderedValue;
     return;
   }
 
@@ -1161,13 +1278,25 @@ function shouldStackBilingualNode(node) {
 function restorePageText() {
   cancelPageTranslation();
   translatedNodes.reverse().forEach((entry) => {
-    if (entry.wrapper?.isConnected) entry.wrapper.replaceWith(entry.node);
+    if (entry.wrapper?.isConnected && isOwnedBilingualWrapper(entry)) {
+      entry.wrapper.replaceWith(entry.node);
+    }
     if (entry.compactTarget) entry.compactTarget.title = entry.originalTitle || "";
-    if (entry.node?.isConnected) entry.node.nodeValue = entry.original;
+    if (entry.node?.isConnected && entry.node.nodeValue === entry.lastRenderedValue) {
+      entry.node.nodeValue = entry.original;
+    }
   });
   translatedNodes = [];
   translatedNodeSet = new WeakSet();
+  translatedNodeEntries = new WeakMap();
   resetPageTranslationProgress();
+}
+
+function isOwnedBilingualWrapper(entry) {
+  if (!entry.wrapper?.matches?.("[data-model-translator-bilingual='true']")) return false;
+  const translation = entry.wrapper.querySelector(".model-translator-bilingual-translation");
+  const original = entry.wrapper.querySelector(".model-translator-bilingual-original");
+  return translation?.textContent === entry.translation && original?.textContent === entry.original.trim();
 }
 
 function createPageTranslationRequestId() {
@@ -1209,6 +1338,10 @@ function startPageTranslationObserver() {
     if (!pageTranslationEnabled) return;
     let relevant = false;
     mutations.forEach((mutation) => {
+      if (mutation.type === "characterData") {
+        if (handlePageTextMutation(mutation.target)) relevant = true;
+        return;
+      }
       if (!isRelevantPageMutation(mutation)) return;
       relevant = true;
       if (mutation.type === "childList") {
@@ -1225,8 +1358,32 @@ function startPageTranslationObserver() {
     childList: true,
     subtree: true,
     attributes: true,
+    characterData: true,
     attributeFilter: ["class", "style", "hidden", "aria-expanded"]
   });
+}
+
+function handlePageTextMutation(node) {
+  if (!(node instanceof Text) || !node.parentElement) return false;
+  if (node.parentElement.closest(`#${BUTTON_ID}, #${POPOVER_ID}, #${WORD_POPOVER_ID}, #${FLOATING_HOST_ID}, [data-model-translator-bilingual]`)) {
+    return false;
+  }
+  const entry = translatedNodeEntries.get(node);
+  if (entry) {
+    if (node.nodeValue === entry.lastRenderedValue) return false;
+    untrackPageTranslationEntry(entry);
+  }
+  registerPageTranslationCandidateNode(node);
+  refreshPageCandidateElement(node.parentElement);
+  return true;
+}
+
+function untrackPageTranslationEntry(entry) {
+  translatedNodes = translatedNodes.filter((item) => item !== entry);
+  translatedNodeSet.delete(entry.node);
+  translatedNodeEntries.delete(entry.node);
+  pageTranslationProgressKnownNodes.delete(entry.node);
+  clearPageTranslationFailure(entry);
 }
 
 function stopPageTranslationObserver() {
@@ -1241,9 +1398,10 @@ function stopPageTranslationObserver() {
 
 function isRelevantPageMutation(mutation) {
   const target = mutation.target;
-  if (!(target instanceof Element)) return false;
-  if (target.closest(`#${BUTTON_ID}, #${POPOVER_ID}, #${WORD_POPOVER_ID}, #${FLOATING_HOST_ID}`)) return false;
-  if (["SCRIPT", "STYLE", "NOSCRIPT"].includes(target.tagName)) return false;
+  const element = target instanceof Element ? target : target?.parentElement;
+  if (!element) return false;
+  if (element.closest(`#${BUTTON_ID}, #${POPOVER_ID}, #${WORD_POPOVER_ID}, #${FLOATING_HOST_ID}`)) return false;
+  if (["SCRIPT", "STYLE", "NOSCRIPT"].includes(element.tagName)) return false;
   return true;
 }
 
@@ -1348,8 +1506,7 @@ function isElementNearTranslationViewport(element) {
 
 function setFloatingPageTranslationBusy(isBusy) {
   setFloatingAssistantTranslationBusy("page", isBusy);
-  const host = document.getElementById(FLOATING_HOST_ID);
-  const shadow = host?.shadowRoot;
+  const shadow = getFloatingShadowRoot();
   if (!shadow) return;
   const cluster = shadow.querySelector(".floating-cluster");
   const pageButton = shadow.querySelector('[data-action="page"]');
@@ -1364,7 +1521,7 @@ function setFloatingPageTranslationBusy(isBusy) {
 }
 
 function updateFloatingPageProgressUi() {
-  const shadow = document.getElementById(FLOATING_HOST_ID)?.shadowRoot;
+  const shadow = getFloatingShadowRoot();
   if (!shadow) return;
   const wrap = shadow.querySelector(".tool-button-page-wrap");
   const button = shadow.querySelector('[data-action="page"]');
@@ -1426,7 +1583,7 @@ function setFloatingAssistantTranslationBusy(requestId, isBusy) {
     assistantTranslationBusyKeys.delete(key);
   }
 
-  const shadow = document.getElementById(FLOATING_HOST_ID)?.shadowRoot;
+  const shadow = getFloatingShadowRoot();
   const assistantIcon = shadow?.querySelector(".floating-assistant-image");
   if (!assistantIcon) return;
   const animationState = assistantTranslationBusyKeys.size ? "translating" : "idle";
@@ -1440,18 +1597,19 @@ function setFloatingAssistantTranslationBusy(requestId, isBusy) {
   assistantIcon.setAttribute("href", iconUrl);
 }
 
-function getCachedPageTranslation(text) {
-  const cached = pageTranslationCache.get(text);
+function getCachedPageTranslation(text, meta) {
+  const key = getPageTranslationCacheKey(text, meta);
+  const cached = pageTranslationCache.get(key);
   if (!cached) return "";
   if (Date.now() - cached.createdAt > PAGE_CACHE_TTL_MS) {
-    pageTranslationCache.delete(text);
+    pageTranslationCache.delete(key);
     return "";
   }
   return cached.translation;
 }
 
-function setCachedPageTranslation(text, translation) {
-  pageTranslationCache.set(text, {
+function setCachedPageTranslation(text, translation, meta) {
+  pageTranslationCache.set(getPageTranslationCacheKey(text, meta), {
     translation,
     createdAt: Date.now()
   });
@@ -1459,9 +1617,9 @@ function setCachedPageTranslation(text, translation) {
 
 function prunePageTranslationCache() {
   const now = Date.now();
-  pageTranslationCache.forEach((cached, text) => {
+  pageTranslationCache.forEach((cached, key) => {
     if (now - cached.createdAt > PAGE_CACHE_TTL_MS) {
-      pageTranslationCache.delete(text);
+      pageTranslationCache.delete(key);
     }
   });
 }
@@ -1781,6 +1939,7 @@ function getPointDistance(point, anchor) {
 function removeSelectionUi() {
   removeSelectionButton();
   removeElement(POPOVER_ID);
+  removeElement(SELECTION_LANGUAGE_MENU_ID);
 }
 
 function removeSelectionButton() {
@@ -1803,10 +1962,29 @@ function getExtensionAssetUrl(path) {
 async function syncSelectionTranslationPreference() {
   try {
     const stored = await chrome.storage.local.get({ [SELECTION_TRANSLATION_ENABLED_KEY]: true });
+    if (contentLifecycleSignal.aborted) return;
     applySelectionTranslationPreference(stored[SELECTION_TRANSLATION_ENABLED_KEY] !== false);
   } catch {
     applySelectionTranslationPreference(true);
   }
+}
+
+async function syncSelectionTargetLanguagePreference() {
+  try {
+    const stored = await chrome.storage.local.get({ [SELECTION_TARGET_LANGUAGE_KEY]: "中文" });
+    if (contentLifecycleSignal.aborted) return;
+    applySelectionTargetLanguagePreference(stored[SELECTION_TARGET_LANGUAGE_KEY]);
+  } catch {
+    applySelectionTargetLanguagePreference("中文");
+  }
+}
+
+function applySelectionTargetLanguagePreference(language) {
+  selectionTargetLanguage = normalizeSelectionTargetLanguage(language);
+  const popover = document.getElementById(POPOVER_ID);
+  const context = popover ? selectionPopoverContexts.get(popover) : null;
+  if (!popover || !context || context.targetLanguage === selectionTargetLanguage) return;
+  selectionPopoverContexts.set(popover, { ...context, targetLanguage: selectionTargetLanguage });
 }
 
 function applySelectionTranslationPreference(enabled) {
@@ -1816,7 +1994,7 @@ function applySelectionTranslationPreference(enabled) {
 }
 
 function updateFloatingSelectionMode() {
-  const shadow = document.getElementById(FLOATING_HOST_ID)?.shadowRoot;
+  const shadow = getFloatingShadowRoot();
   if (!shadow) return;
   const cluster = shadow.querySelector(".floating-cluster");
   const toggle = shadow.querySelector(".floating-selection-toggle");
@@ -1828,7 +2006,7 @@ function updateFloatingSelectionMode() {
 }
 
 function isTranslatorUiTarget(target) {
-  return target instanceof Element && Boolean(target.closest(`#${BUTTON_ID}, #${POPOVER_ID}, #${WORD_POPOVER_ID}, #${FLOATING_HOST_ID}`));
+  return target instanceof Element && Boolean(target.closest(`#${BUTTON_ID}, #${POPOVER_ID}, #${SELECTION_LANGUAGE_MENU_ID}, #${WORD_POPOVER_ID}, #${FLOATING_HOST_ID}`));
 }
 
 function stopUiEvent(event) {
@@ -1836,22 +2014,31 @@ function stopUiEvent(event) {
 }
 
 async function syncAssistantModeVisibility() {
+  if (contentLifecycleSignal.aborted) return;
   const host = document.getElementById(FLOATING_HOST_ID);
   if (document.fullscreenElement) {
-    host?.remove();
-    document.getElementById(FLOATING_GLASS_ID)?.remove();
-    document.getElementById(FLOATING_GLASS_DEFINITIONS_ID)?.remove();
+    removeFloatingLauncher();
     return;
   }
 
   const active = await isAssistantModeActive();
+  if (contentLifecycleSignal.aborted) return;
   if (active) {
     if (!host) initFloatingLauncher();
   } else {
-    host?.remove();
-    document.getElementById(FLOATING_GLASS_ID)?.remove();
-    document.getElementById(FLOATING_GLASS_DEFINITIONS_ID)?.remove();
+    removeFloatingLauncher();
   }
+}
+
+function getFloatingShadowRoot() {
+  return floatingAssistantShadow?.host?.isConnected ? floatingAssistantShadow : null;
+}
+
+function removeFloatingLauncher() {
+  document.getElementById(FLOATING_HOST_ID)?.remove();
+  document.getElementById(FLOATING_GLASS_ID)?.remove();
+  document.getElementById(FLOATING_GLASS_DEFINITIONS_ID)?.remove();
+  floatingAssistantShadow = null;
 }
 
 async function isAssistantModeActive() {
@@ -1968,20 +2155,15 @@ function initFloatingLauncher() {
   host.id = FLOATING_HOST_ID;
   document.documentElement.appendChild(host);
 
-  const shadow = host.attachShadow({ mode: "open" });
+  const shadow = host.attachShadow({ mode: "closed" });
+  floatingAssistantShadow = shadow;
   const wrapper = document.createElement("div");
   wrapper.className = "floating-wrapper is-right-side";
   wrapper.innerHTML = `
     <div class="floating-cluster">
       <button class="floating-button" type="button" title="小译" aria-label="小译">
         <svg class="floating-assistant-art" viewBox="18 13 92 92" aria-hidden="true">
-          <defs>
-            <mask id="floating-assistant-star-cutout">
-              <rect x="18" y="13" width="92" height="92" fill="#fff"></rect>
-              <circle cx="98" cy="40" r="15" fill="#000"></circle>
-            </mask>
-          </defs>
-          <image class="floating-assistant-image" href="${assistantIdleUrl}" x="18" y="13" width="92" height="92" mask="url(#floating-assistant-star-cutout)" data-animation-state="idle"></image>
+          <image class="floating-assistant-image" href="${assistantIdleUrl}" x="18" y="13" width="92" height="92" data-animation-state="idle"></image>
           <path class="floating-selection-star" d="M98 28l4 8 8 4-8 4-4 8-4-8-8-4 8-4 4-8z" fill="#F59E0B"></path>
         </svg>
       </button>
@@ -2018,7 +2200,7 @@ function initFloatingLauncher() {
             <button type="button" data-page-display="bilingual">双语显示</button>
           </div>
         </div>
-        <button class="tool-button tool-button-primary-self" type="button" data-action="self" data-tip="自助翻译"><span class="ui-icon icon-spark" aria-hidden="true"></span></button>
+        <button class="tool-button tool-button-primary-self" type="button" data-action="self" data-tip="自助译"><span class="ui-icon icon-spark" aria-hidden="true"></span></button>
         <button class="tool-button tool-button-primary-wordbook" type="button" data-action="wordbook" data-tip="单词本"><span class="ui-icon icon-book" aria-hidden="true"></span></button>
         <button class="tool-button tool-button-more" type="button" data-more-trigger data-tip="更多功能" aria-label="更多功能" aria-expanded="false"><span class="ui-icon icon-more" aria-hidden="true"></span></button>
         <button class="tool-button tool-button-overflow" type="button" data-action="history" data-tip="历史记录" style="--more-index: 0" hidden><span class="ui-icon icon-history" aria-hidden="true"></span></button>
@@ -4731,6 +4913,7 @@ function initFloatingLauncher() {
   };
 
   loadFloatingPosition().then((position) => {
+    if (contentLifecycleSignal.aborted || !host.isConnected) return;
     if (position) {
       state.x = position.x;
       state.y = position.y;
@@ -4789,8 +4972,9 @@ function initFloatingLauncher() {
     dismissTrigger.classList.toggle("is-open", !dismissMenu.hidden);
   });
 
-  document.addEventListener("pointerdown", (event) => {
+  const handleFloatingPointerDown = (event) => {
     const path = event.composedPath();
+    if (event.currentTarget === document && path.includes(host)) return;
     const insideDismiss = path.includes(dismissMenu) || path.includes(dismissTrigger);
     const insidePanel = path.includes(panel);
     const insideLauncher = path.includes(button) || path.includes(selectionToggle) || path.includes(menu);
@@ -4812,7 +4996,9 @@ function initFloatingLauncher() {
     if (!panel.hidden && !state.panelPinned && !insidePanel && !insideLauncher && !insideDismiss) {
       closeFloatingPanel();
     }
-  });
+  };
+  shadow.addEventListener("pointerdown", handleFloatingPointerDown, { signal: contentLifecycleSignal });
+  document.addEventListener("pointerdown", handleFloatingPointerDown, { signal: contentLifecycleSignal });
 
   dismissMenu.addEventListener("click", async (event) => {
     const action = event.target.closest("[data-dismiss]")?.dataset.dismiss;
@@ -4896,7 +5082,7 @@ function initFloatingLauncher() {
     applyFloatingPosition(wrapper, panel, state);
     scheduleFloatingMenuLiquidGlass(320);
     saveFloatingPosition(state);
-  });
+  }, { signal: contentLifecycleSignal });
 
   close.addEventListener("click", () => closeFloatingPanel({ keepMenuExpanded: true }));
 
@@ -5401,14 +5587,18 @@ async function renderFloatingSettings({ title, status, body }) {
   title.textContent = "AI 配置";
   body.innerHTML = `
     <label class="field">Base URL<input id="floatingBaseUrl" type="url" /></label>
-    <label class="field api-key-field">API Key<input id="floatingApiKey" type="password" autocomplete="off" /><span class="api-key-tip">仅保存在本机浏览器中，只用于翻译和连接测试。</span></label>
+    <label class="field api-key-field">API Key<input id="floatingApiKey" type="password" autocomplete="off" /><span class="api-key-tip">已保存的密钥不会显示；留空不会修改。</span></label>
     <label class="field">模型名称<input id="floatingModel" type="text" /></label>
     <button class="primary" id="floatingSaveSettings" type="button">保存并测试</button>
   `;
 
-  const settings = await chrome.storage.sync.get(DEFAULT_SETTINGS);
+  const response = await chrome.runtime.sendMessage({ type: "get-settings-meta" });
+  if (!response?.ok) throw new Error(response?.error || "读取模型配置失败");
+  const settings = { ...DEFAULT_SETTINGS, ...response };
   body.querySelector("#floatingBaseUrl").value = settings.baseUrl || "";
-  body.querySelector("#floatingApiKey").value = settings.apiKey || "";
+  const apiKeyInput = body.querySelector("#floatingApiKey");
+  apiKeyInput.value = "";
+  apiKeyInput.placeholder = settings.hasApiKey ? "已保存，留空不修改" : "sk-...";
   body.querySelector("#floatingModel").value = settings.model || "";
 
   body.querySelector("#floatingSaveSettings").addEventListener("click", async (event) => {
@@ -5424,9 +5614,16 @@ async function renderFloatingSettings({ title, status, body }) {
     button.textContent = "测试中";
     setFloatingStatus(status, "正在测试连接");
     try {
-      await chrome.storage.sync.set(next);
-      const response = await chrome.runtime.sendMessage({ type: "test-connection", settings: next });
-      if (!response?.ok) throw new Error(response?.error || "连接失败");
+      const saveResponse = await chrome.runtime.sendMessage({
+        type: "save-settings",
+        settings: next,
+        preserveApiKey: !next.apiKey
+      });
+      if (!saveResponse?.ok) throw new Error(saveResponse?.error || "保存设置失败");
+      const testResponse = await chrome.runtime.sendMessage({ type: "test-connection", settings: next });
+      if (!testResponse?.ok) throw new Error(testResponse?.error || "连接失败");
+      apiKeyInput.value = "";
+      apiKeyInput.placeholder = "已保存，留空不修改";
       setFloatingStatus(status, "连接成功");
     } catch (error) {
       setFloatingStatus(status, error.message || String(error), true);
@@ -5438,7 +5635,7 @@ async function renderFloatingSettings({ title, status, body }) {
 }
 
 function renderFloatingSelfTranslate({ title, status, body }) {
-  title.textContent = "自助翻译";
+  title.textContent = "自助译";
   body.innerHTML = `
     <div class="translate-controls">
       <select id="floatingSourceLanguage" aria-label="原语言">
@@ -5475,7 +5672,12 @@ function renderFloatingSelfTranslate({ title, status, body }) {
       ? stored.selfSourceLanguage
       : "自动识别";
     sourceLanguage.dataset.autoDetected = sourceLanguage.value === "自动识别" ? "true" : "false";
-    target.value = stored.selfTargetLanguage === "自动识别（中英互译）" ? "自动（中英互译）" : stored.selfTargetLanguage;
+    const storedTarget = stored.selfTargetLanguage === "自动识别（中英互译）"
+      ? "自动（中英互译）"
+      : stored.selfTargetLanguage;
+    target.value = Array.from(target.options).some((option) => option.value === storedTarget)
+      ? storedTarget
+      : "自动（中英互译）";
   });
   sourceLanguage.addEventListener("change", () => {
     sourceLanguage.dataset.autoDetected = sourceLanguage.value === "自动识别" ? "true" : "false";
@@ -5693,7 +5895,7 @@ async function renderFloatingHistory({ title, status, body }) {
           <option value="all">全部类型</option>
           <option value="selection">随手划</option>
           <option value="page">整页翻译</option>
-          <option value="self">自助翻译</option>
+          <option value="self">自助译</option>
         </select>
         <input id="floatingHistorySearch" class="history-search" type="search" placeholder="搜索历史" autocomplete="off" />
         <button class="danger" id="floatingClearHistory" type="button">清空历史</button>
@@ -5871,7 +6073,7 @@ function showFloatingConfirmDialog(source, message) {
     });
     layer.querySelector(".panel-confirm-cancel").addEventListener("click", () => finish(false));
     layer.querySelector(".panel-confirm-danger").addEventListener("click", () => finish(true));
-    document.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("keydown", onKeyDown, { capture: true, signal: contentLifecycleSignal });
     panel.appendChild(layer);
     layer.querySelector(".panel-confirm-cancel").focus();
   });
@@ -5901,7 +6103,7 @@ function usageCard(label, value) {
 function modeLabel(mode, count) {
   if (mode === "selection") return "随手划";
   if (mode === "page") return `整页翻译${count ? ` · ${count} 段` : ""}`;
-  if (mode === "self") return "自助翻译";
+  if (mode === "self") return "自助译";
   if (mode === "word") return "单词学习";
   if (mode === "test") return "连接测试";
   return "其他";
@@ -5959,7 +6161,34 @@ function escapeHtml(value) {
   })[char]);
 }
 
+function disposeContentScript() {
+  if (contentLifecycleSignal.aborted) return;
+  contentLifecycleController.abort();
+  chrome.storage.onChanged.removeListener(handleContentStorageChange);
+  chrome.runtime.onMessage.removeListener(handleContentRuntimeMessage);
+  try {
+    restorePageText();
+  } catch {
+    stopPageTranslationObserver();
+  }
+  window.clearTimeout(pageLazyTimer);
+  window.clearTimeout(pageHoverTimer);
+  window.clearTimeout(pagePersistentCacheFlushTimer);
+  window.clearTimeout(setFloatingStatus.timer);
+  removeSelectionUi();
+  removeWordPopover();
+  removeFloatingLauncher();
+  document.getElementById(CONTENT_STYLE_ID)?.remove();
+  delete document.documentElement.dataset.modelTranslatorContentVersion;
+  if (window.__MODEL_TRANSLATOR_CONTENT_DISPOSE__ === disposeContentScript) {
+    delete window.__MODEL_TRANSLATOR_CONTENT_DISPOSE__;
+    delete window.__MODEL_TRANSLATOR_CONTENT_LOADED__;
+    delete window.__MODEL_TRANSLATOR_CONTENT_VERSION__;
+  }
+}
+
 const style = document.createElement("style");
+style.id = CONTENT_STYLE_ID;
 style.textContent = `
   .model-translator-bilingual-segment {
     display: inline;
@@ -6206,6 +6435,96 @@ style.textContent = `
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  #${POPOVER_ID} .model-translator-selection-language-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 5px;
+    height: 24px;
+    padding: 0 5px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    box-shadow: none;
+    cursor: pointer;
+    text-align: left;
+    transition: background 140ms ease, color 140ms ease, transform 140ms ease;
+  }
+
+  #${POPOVER_ID} .model-translator-selection-language-trigger:hover,
+  #${POPOVER_ID} .model-translator-selection-language-trigger[aria-expanded="true"] {
+    background: #ecf5ff;
+    color: #409eff;
+  }
+
+  #${POPOVER_ID} .model-translator-selection-language-trigger:active {
+    transform: scale(0.97);
+  }
+
+  #${POPOVER_ID} .model-translator-selection-language-trigger span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  #${POPOVER_ID} .model-translator-selection-language-trigger i {
+    flex: 0 0 auto;
+    width: 5px;
+    height: 5px;
+    border-right: 1.2px solid currentColor;
+    border-bottom: 1.2px solid currentColor;
+    transform: translateY(-1px) rotate(45deg);
+  }
+
+  #${POPOVER_ID} .model-translator-selection-language-trigger[aria-expanded="true"] i {
+    transform: translateY(1px) rotate(225deg);
+  }
+
+  #${SELECTION_LANGUAGE_MENU_ID} {
+    position: fixed;
+    z-index: 2147483647;
+    box-sizing: border-box;
+    display: grid;
+    gap: 2px;
+    max-height: min(220px, calc(100vh - 16px));
+    padding: 6px;
+    overflow-y: auto;
+    border: 1px solid #dbe3ee;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.98);
+    color: #64748b;
+    box-shadow: 0 14px 32px rgba(15, 23, 42, 0.18);
+    font: 500 11px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+
+  #${SELECTION_LANGUAGE_MENU_ID} button {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 27px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    box-shadow: none;
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+    transition: background 130ms ease, color 130ms ease;
+  }
+
+  #${SELECTION_LANGUAGE_MENU_ID} button:hover,
+  #${SELECTION_LANGUAGE_MENU_ID} button.is-active {
+    background: #ecf5ff;
+    color: #337ecc;
+  }
+
+  #${SELECTION_LANGUAGE_MENU_ID} button.is-active::after {
+    content: "✓";
+    font-size: 10px;
   }
 
   #${POPOVER_ID} .model-translator-popover-copy {
